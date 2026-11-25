@@ -4,11 +4,13 @@
 #   bash install-relay.sh                # 从 GitHub 拉最新 relay
 #   bash install-relay.sh --port 8790    # 换端口（默认 8790）
 #   bash install-relay.sh --from-zip /root/dsh-collab-relay.zip
+#   bash install-relay.sh --host 127.0.0.1      # 只监听本机（配合 nginx 反代时用）
 #
 # 装完会打印团队要填的 relay 地址。之后 systemd 负责开机自启与崩溃重启。
 set -euo pipefail
 
 PORT=8790
+HOST=0.0.0.0
 FROM_ZIP=""
 # 下载源：国内优先 jsDelivr，其次 GitHub raw（后者在部分网络不可达）
 REPO_SOURCES=(
@@ -21,6 +23,7 @@ DATA="/var/lib/dsh-collab"
 while [ $# -gt 0 ]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;
+    --host) HOST="$2"; shift 2 ;;
     --from-zip) FROM_ZIP="$2"; shift 2 ;;
     *) echo "未知参数: $1"; exit 1 ;;
   esac
@@ -92,7 +95,7 @@ Type=simple
 User=dsh
 WorkingDirectory=$DEST
 Environment=RELAY_DATA_DIR=$DATA
-ExecStart=$(command -v node) $DEST/scripts/relay-server.mjs --port $PORT --host 0.0.0.0 --rooms 64
+ExecStart=$(command -v node) $DEST/scripts/relay-server.mjs --port $PORT --host $HOST --rooms 64
 Restart=always
 RestartSec=3
 MemoryMax=256M

@@ -1,3 +1,7 @@
+# 0.6.7
+
+- `install-relay.sh` 新增 `--host`：可只监听 127.0.0.1，配合已有的 nginx 用 80/443 反代（不必对外开 8790）。
+
 # 0.6.6
 
 - 新增 `deploy/install-relay.sh`：Ubuntu/Debian 上一条命令装好中继（Node、服务用户、systemd 自启、崩溃重启、端口放行、自检）。
