@@ -73,7 +73,7 @@ function trimRooms() {
   for (const room of sorted.slice(0, rooms.size - MAX_ROOMS)) rooms.delete(room.code)
 }
 
-function snapshotFor(room) {
+function snapshotFor(room, req) {
   const members = [...room.members.values()].map((member) => ({
     ...member,
     online: now() - member.updatedAt < MEMBER_STALE_MS,
@@ -81,7 +81,7 @@ function snapshotFor(room) {
   return {
     roomId: room.id,
     code: room.code,
-    relay: relayUrl(),
+    relay: relayUrlFor(req),
     members,
     messages: room.messages.slice(-MAX_MESSAGES),
     updatedAt: room.updatedAt,
@@ -91,6 +91,18 @@ function snapshotFor(room) {
 let origin = `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}`
 function relayUrl() {
   return `${origin.replace(/\/+$/, '')}${BASE}/relay`
+}
+
+/**
+ * 对外的 relay 地址要跟访问者看到的一致：走 Tailscale Funnel / nginx 时
+ * Host 头是公网域名，x-forwarded-proto 说明是 https。落地页与二维码都靠它。
+ */
+function relayUrlFor(req) {
+  const host = req && req.headers ? req.headers.host : ''
+  const proto = (req && req.headers && (req.headers['x-forwarded-proto'] || '')).split(',')[0].trim()
+  if (!host) return relayUrl()
+  const scheme = proto === 'https' || proto === 'http' ? proto : 'http'
+  return `${scheme}://${host}${BASE}/relay`
 }
 
 function json(res, status, value) {
@@ -181,7 +193,7 @@ function createRoom(name) {
   return room
 }
 
-const joinPage = (code) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+const joinPage = (code, relayAddr) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>加入协作室</title>
 <style>body{margin:0;font:15px/1.6 ui-sans-serif,system-ui,sans-serif;background:#0f1216;color:#e8eaed;
 display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
@@ -192,13 +204,13 @@ font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all}
 .code{font-size:26px;letter-spacing:6px;color:#5ad1c0}</style></head><body><div class="card">
 <h1>加入 DSH 协作室</h1><p>独立 relay，不依赖任何人的 DSH 在线。</p>
 <div>邀请码</div><div class="v code">${code}</div>
-<div>Relay 地址</div><div class="v">${relayUrl()}</div>
+<div>Relay 地址</div><div class="v">${relayAddr}</div>
 <p>在你自己的 DSH 里：新建会话 → 协作模式 → 开启协作 → 把上面的地址和邀请码填进「加入别人的协作室」。</p>
 </div></body></html>`
 
 function handleRelay(sub, req, res) {
   if (sub === '/relay/health' && req.method === 'GET') {
-    json(res, 200, { ok: true, rooms: rooms.size, host: hostname(), relay: relayUrl() })
+    json(res, 200, { ok: true, rooms: rooms.size, host: hostname(), relay: relayUrlFor(req) })
     return
   }
   if (sub === '/relay/rooms' && req.method === 'GET') {
@@ -208,7 +220,7 @@ function handleRelay(sub, req, res) {
   if (sub === '/relay/room' && req.method === 'POST') {
     return readJson(req).then((body) => {
       const room = createRoom(body.name)
-      json(res, 200, { ok: true, code: room.code, roomId: room.id, relay: relayUrl() })
+      json(res, 200, { ok: true, code: room.code, roomId: room.id, relay: relayUrlFor(req) })
     })
   }
   if (sub === '/relay/join' && req.method === 'POST') {
@@ -310,7 +322,7 @@ function handleRelay(sub, req, res) {
       return
     }
     found.member.updatedAt = now()
-    json(res, 200, snapshotFor(found.room))
+    json(res, 200, snapshotFor(found.room, req))
     return
   }
   if (sub === '/relay/artifact' && req.method === 'GET') {
@@ -355,12 +367,12 @@ const server = createServer((req, res) => {
     .then(() => {
       if (sub === '/join' || sub === '/join/') {
         const code = (url.searchParams.get('c') || url.searchParams.get('code') || '').toUpperCase()
-        html(res, 200, joinPage(code))
+        html(res, 200, joinPage(code, relayUrlFor(req)))
         return
       }
       if (sub && sub.startsWith('/relay')) return handleRelay(sub, req, res)
       if (!sub || sub === '/' || sub === '') {
-        json(res, 200, { ok: true, service: 'dsh-collab independent relay', relay: relayUrl(), rooms: roomsView() })
+        json(res, 200, { ok: true, service: 'dsh-collab independent relay', relay: relayUrlFor(req), rooms: roomsView() })
         return
       }
       json(res, 404, { error: 'not found' })

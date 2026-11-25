@@ -341,6 +341,34 @@ export function apply(ctx) {
     bump()
   }
 
+  // 上次加入过的房间：DSH 重启后自动回去，不用每次手动填地址
+  const resumeRelay = typeof persisted.relay === 'string' ? persisted.relay : ''
+  const resumeCode = typeof persisted.code === 'string' ? persisted.code : ''
+  if (resumeRelay && resumeCode) {
+    let attempts = 0
+    const resumeTimer = setInterval(async () => {
+      attempts += 1
+      if (attempts > 8) {
+        clearInterval(resumeTimer)
+        return
+      }
+      try {
+        const response = await fetch(`${originOf()}${BASE}/api/join`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ relay: resumeRelay, code: resumeCode, name: state.self.name }),
+        })
+        if (response.ok) {
+          clearInterval(resumeTimer)
+          console.log('[dsh-collab] 已自动回到协作室', resumeCode)
+        }
+      } catch {
+        /* 端口还没起来，等下一轮 */
+      }
+    }, 1500)
+    if (resumeTimer && typeof resumeTimer.unref === 'function') resumeTimer.unref()
+  }
+
   void probeReachableHosts()
   probeTimer = setInterval(() => void probeReachableHosts(), 60_000)
   if (probeTimer && typeof probeTimer.unref === 'function') probeTimer.unref()
@@ -815,9 +843,41 @@ export function apply(ctx) {
       }
     }
     if (state.mode === 'guest' && state.remoteSnap) {
+      const remoteCode = state.remoteSnap.code || (state.room && state.room.code) || ''
+      const relayAddr = state.relayUrl || ''
+      let guestInvite = null
+      try {
+        const lane = new URL(relayAddr)
+        const landing = `${lane.origin}${BASE}/join?c=${encodeURIComponent(remoteCode)}`
+        const qrKey2 = `guest|${landing}`
+        if (qrCache.key !== qrKey2) {
+          let qr = null
+          try {
+            const result = qrSvgPath(landing, { ecl: 'M', quiet: 2 })
+            qr = { path: result.path, dimension: result.dimension, version: result.version, ecl: result.ecl }
+          } catch {
+            qr = null
+          }
+          qrCache = { key: qrKey2, value: qr }
+        }
+        guestInvite = {
+          code: remoteCode,
+          primaryUrl: landing,
+          channel: 'relay',
+          localRelay: relayAddr,
+          lanRelay: relayAddr,
+          publicRelay: relayAddr,
+          reachable: true,
+          plain: `relay=${relayAddr}\ncode=${remoteCode}`,
+          qr: qrCache.value,
+        }
+      } catch {
+        guestInvite = null
+      }
       return {
         ...state.remoteSnap,
         mode: 'guest',
+        invite: guestInvite,
         relay: state.relayUrl,
         self: { id: state.self.id, name: state.self.name },
         localSessions: localSessionViews(),
@@ -1311,6 +1371,7 @@ export function apply(ctx) {
         state.relayUrl = relay
         state.token = payload.token
         state.room = payload.room || { id: 'remote', code }
+        saveSettings({ relay, code })
         state.remoteSnap = null
         startGuestLoop()
         void guestReport()
@@ -1323,6 +1384,7 @@ export function apply(ctx) {
     if (sub === '/api/leave') {
       stopGuestLoop()
       labStop()
+      saveSettings({ relay: '', code: '' })
       state.mode = 'offline'
       state.room = null
       state.relayUrl = null

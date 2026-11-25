@@ -57,6 +57,7 @@ window.__ModuleLoader__.load({
       stepCreate: '第 1 步 · 创建协作室',
       createHint: '创建后会立刻生成：二维码 + 邀请链接 + 6 位随机邀请码，都在下面这个面板里。',
       inviteStep: '第 2 步 · 把这个发给朋友（扫二维码 / 发链接 / 发邀请码都行）',
+      relayInviteHint: '这个二维码指向中继的加入说明页：朋友扫码或点链接就知道该往自己的 DSH 里填什么。',
       localBoard: '本机看板（不加入任何房间也能看自己）',
       publicPlaceholder: '固定地址：https://你的域名（Tailscale Funnel / nginx / 固定隧道）',
       publicSave: '保存地址',
@@ -748,10 +749,8 @@ window.__ModuleLoader__.load({
                         h('button', { type: 'button', style: S.btn, disabled: busy, onClick: () => call('/leave') }, TEXT.leave),
                       ),
                     ),
-                    mode === 'host' && invite
-                      ? h('div', { style: S.step }, TEXT.inviteStep)
-                      : null,
-                    mode === 'host' && invite
+                    invite ? h('div', { style: S.step }, TEXT.inviteStep) : null,
+                    invite
                       ? h(
                           'div',
                           { style: S.inviteBox },
@@ -787,6 +786,9 @@ window.__ModuleLoader__.load({
                           ),
                         )
                       : h('div', { style: { ...S.label, wordBreak: 'break-all' } }, TEXT.relayLabel + '：' + ((snap && snap.relay) || relay)),
+                    invite && invite.channel === 'relay'
+                      ? h('div', { style: S.label }, TEXT.relayInviteHint)
+                      : null,
                     mode === 'host'
                       ? h(
                           'div',
