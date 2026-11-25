@@ -209,6 +209,57 @@ function findCloudflared() {
   return null
 }
 
+function settingsBases() {
+  const bases = []
+  const add = (value) => {
+    if (value && String(value).trim()) bases.push(String(value).trim())
+  }
+  add(process.env.DSH_HOME)
+  add(process.env.DSH_PROFILE_DIR)
+  try {
+    add(joinPath(process.cwd(), 'home'))
+    add(joinPath(homedir(), '.dsh'))
+  } catch {
+    /* ignore */
+  }
+  return bases
+}
+
+/**
+ * 插件自己的小配置：固定公网地址（Tailscale Funnel / nginx / 固定隧道都行）、
+ * 自己的显示名。落在 DSH home 下的 collab/settings.json，重启后仍然在。
+ */
+function settingsFile() {
+  const bases = settingsBases()
+  const base = bases.find((dir) => existsSync(dir)) || bases[0]
+  if (!base) return null
+  return joinPath(base, 'collab', 'settings.json')
+}
+
+function loadSettings() {
+  try {
+    const file = settingsFile()
+    if (!file || !existsSync(file)) return {}
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveSettings(patch) {
+  try {
+    const file = settingsFile()
+    if (!file) return null
+    mkdirSync(dirname(file), { recursive: true })
+    const next = { ...loadSettings(), ...patch }
+    writeFileSync(file, JSON.stringify(next, null, 2) + '\n', 'utf8')
+    return next
+  } catch {
+    return null
+  }
+}
+
 const LAB_PEOPLE = [
   { name: '研究员A（模拟）', labels: ['alpha-service', 'alpha-web'] },
   { name: '研究员B（模拟）', labels: ['beta-etl'] },
@@ -225,7 +276,10 @@ const LAB_NOTES = [
 ]
 
 export function apply(ctx) {
+  const persisted = loadSettings()
   const state = {
+    // 固定公网地址（Tailscale Funnel / nginx / 固定隧道），设了就用它生成邀请链接
+    publicBaseUrl: typeof persisted.publicBaseUrl === 'string' ? persisted.publicBaseUrl : '',
     mode: 'offline', // offline | host | guest
     self: { id: shortId('u'), name: defaultName(), machine: hostname() },
     room: null,
@@ -642,8 +696,10 @@ export function apply(ctx) {
     const lanUrl = buildUrl(addrs.lanRelay)
     const tunnelRelay = tunnel.url ? `${tunnel.url}${BASE}/relay` : null
     const tunnelUrl = tunnelRelay ? buildUrl(tunnelRelay) : null
-    const primary = tunnelUrl || (addrs.reachable ? lanUrl : localUrl)
-    const channel = tunnelUrl ? 'tunnel' : addrs.reachable ? 'lan' : 'loopback'
+    const publicRelay = state.publicBaseUrl ? `${state.publicBaseUrl}${BASE}/relay` : null
+    const publicUrl = publicRelay ? buildUrl(publicRelay) : null
+    const primary = publicUrl || tunnelUrl || (addrs.reachable ? lanUrl : localUrl)
+    const channel = publicUrl ? 'public' : tunnelUrl ? 'tunnel' : addrs.reachable ? 'lan' : 'loopback'
     const qrKey = `${primary}`
     if (qrCache.key !== qrKey) {
       let qr = null
@@ -665,15 +721,22 @@ export function apply(ctx) {
       localRelay: addrs.local,
       lanRelay: addrs.lanRelay,
       tunnelRelay,
+      publicRelay,
+      publicBaseUrl: state.publicBaseUrl || null,
       lan: addrs.lan,
       reachable: addrs.reachable,
-      joinPage: `${(tunnelRelay || addrs.local).replace(/\/relay$/, '')}/join?c=${encodeURIComponent(code)}`,
+      joinPage: `${(publicRelay || tunnelRelay || addrs.local).replace(/\/relay$/, '')}/join?c=${encodeURIComponent(code)}`,
       qr: qrCache.value,
-      plain: `relay=${tunnelRelay || (addrs.reachable ? addrs.lanRelay : addrs.local)}\ncode=${code}`,
+      plain: `relay=${publicRelay || tunnelRelay || (addrs.reachable ? addrs.lanRelay : addrs.local)}\ncode=${code}`,
     }
   }
 
   function snapshot() {
+    const settingsView = {
+      publicBaseUrl: state.publicBaseUrl || '',
+      settingsFile: settingsFile(),
+      selfName: state.self.name,
+    }
     if (state.mode === 'host') {
       const members = [selfView()]
       for (const member of relayMembers.values()) {
@@ -689,6 +752,7 @@ export function apply(ctx) {
         members,
         messages: trimmedMessages(),
         invite: inviteOf(),
+        settings: settingsView,
         tunnel: tunnelView(),
         lab: { running: lab.running, members: lab.members.map((m) => m.name) },
         updatedAt: now(),
@@ -701,6 +765,7 @@ export function apply(ctx) {
         relay: state.relayUrl,
         self: { id: state.self.id, name: state.self.name },
         localSessions: localSessionViews(),
+        settings: settingsView,
         tunnel: tunnelView(),
       }
     }
@@ -712,6 +777,7 @@ export function apply(ctx) {
       messages: [],
       project: null,
       invite: null,
+      settings: settingsView,
       tunnel: tunnelView(),
       lab: { running: false, members: [] },
       updatedAt: now(),
@@ -1176,7 +1242,7 @@ export function apply(ctx) {
         const response = await fetch(`${relay}/join`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ code, name: state.self.name, machine: hostname() }),
+          body: JSON.stringify({ code, name: state.self.name, machine: hostname(), create: body.create !== false }),
         })
         const payload = await response.json().catch(() => ({}))
         if (!response.ok) {
@@ -1228,6 +1294,48 @@ export function apply(ctx) {
     if (sub === '/api/lab/stop') {
       const result = labStop()
       sendJson(res, 200, { ok: true, ...result, snapshot: snapshot() })
+      return
+    }
+    if (sub === '/api/settings') {
+      const patch = {}
+      if (typeof body.publicBaseUrl === 'string') {
+        const value = body.publicBaseUrl.trim().replace(/\/+$/, '')
+        if (value && !/^https?:\/\//i.test(value)) {
+          sendJson(res, 400, { error: '固定地址要以 http:// 或 https:// 开头' })
+          return
+        }
+        patch.publicBaseUrl = value
+        state.publicBaseUrl = value
+      }
+      if (typeof body.name === 'string' && body.name.trim()) {
+        patch.name = body.name.trim().slice(0, 40)
+        state.self.name = patch.name
+      }
+      saveSettings(patch)
+      qrCache = { key: '', value: null }
+      bump()
+      sendJson(res, 200, { ok: true, settings: { publicBaseUrl: state.publicBaseUrl }, snapshot: snapshot() })
+      return
+    }
+    if (sub === '/api/public-url/check') {
+      const target = String(body.publicBaseUrl || state.publicBaseUrl || '').trim().replace(/\/+$/, '')
+      if (!target) {
+        sendJson(res, 400, { error: '先填一个固定地址' })
+        return
+      }
+      try {
+        const response = await fetch(`${target}${BASE}/relay/health`, { signal: AbortSignal.timeout(8000) })
+        const payload = await response.json().catch(() => null)
+        sendJson(res, response.ok ? 200 : 502, {
+          ok: response.ok,
+          status: response.status,
+          room: payload && payload.room,
+          host: payload && payload.host,
+          error: response.ok ? undefined : `健康检查返回 ${response.status}`,
+        })
+      } catch (error) {
+        sendJson(res, 502, { ok: false, error: String(error && error.message ? error.message : error) })
+      }
       return
     }
     if (sub === '/api/share') {

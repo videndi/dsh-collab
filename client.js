@@ -52,6 +52,13 @@ window.__ModuleLoader__.load({
       tunnelError: '隧道启动失败：',
       tunnelHint: '公网隧道已开启：朋友在任何网络、任何机器上都能用这个链接加入（隧道随 DSH 关闭失效）。',
       projectLabel: '项目',
+      localBoard: '本机看板（不加入任何房间也能看自己）',
+      publicPlaceholder: '固定地址：https://你的域名（Tailscale Funnel / nginx / 固定隧道）',
+      publicSave: '保存地址',
+      publicCheck: '检测',
+      publicSaved: '固定地址已保存：邀请链接会一直用它',
+      publicOk: '固定地址可达，邀请链接可以直接发人',
+      publicBad: '这个地址现在打不通，检查 Funnel / 反代 / 端口',
       share: '分享成果',
       sharePlaceholder: '把本机文件路径贴这里，推到房间里给队友看（≤32KB 文本）',
       roomTotal: '房间合计',
@@ -256,6 +263,42 @@ window.__ModuleLoader__.load({
         wordBreak: 'break-word',
         color: 'var(--dsw-alias-label-primary, #e8eaed)',
       },
+      popover: {
+        border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.28))',
+        background: 'var(--dsw-alias-bg-layer-1, rgba(128,128,128,.06))',
+        borderRadius: 10,
+        padding: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        maxHeight: '58vh',
+        overflowY: 'auto',
+        position: 'relative',
+        zIndex: 30,
+      },
+      linkLine: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        minWidth: 0,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: 11,
+        padding: '5px 8px',
+        borderRadius: 6,
+        background: 'var(--dsw-alias-bg-base, rgba(0,0,0,.2))',
+        border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.28))',
+        color: 'var(--dsw-alias-label-secondary, #9aa0a6)',
+      },
+      linkText: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      board: {
+        border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.24))',
+        borderRadius: 8,
+        padding: '8px 10px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.06))',
+      },
       qrBox: { background: '#fff', padding: 8, borderRadius: 10, lineHeight: 0, flex: '0 0 auto' },
       linkBox: {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -305,6 +348,7 @@ window.__ModuleLoader__.load({
       const [copied, setCopied] = React.useState('')
       const [preview, setPreview] = React.useState(null)
       const [sharePath, setSharePath] = React.useState('')
+      const [publicBase, setPublicBase] = React.useState('')
       const mounted = React.useRef(true)
       const prefilled = React.useRef(false)
 
@@ -320,6 +364,7 @@ window.__ModuleLoader__.load({
             setSnap(data)
             setError('')
             if (data && data.self && data.self.name && !name) setName(data.self.name)
+            if (data && data.settings && data.settings.publicBaseUrl && !publicBase) setPublicBase(data.settings.publicBaseUrl)
             if (!prefilled.current) {
               const fromUrl = inviteFromLocation()
               if (fromUrl && data && data.mode === 'offline') {
@@ -468,7 +513,7 @@ window.__ModuleLoader__.load({
         expanded
           ? h(
               'div',
-              { style: S.card },
+              { style: S.popover },
               !active
                 ? h(
                     React.Fragment,
@@ -486,6 +531,55 @@ window.__ModuleLoader__.load({
                       h('button', { type: 'button', style: S.btnPrimary, disabled: busy, onClick: () => call('/create', { name }) }, TEXT.create),
                       h('button', { type: 'button', style: S.btn, disabled: busy, onClick: () => call('/lab', { members: 2 }) }, TEXT.lab),
                     ),
+                    (snap && snap.localSessions && snap.localSessions.length)
+                      ? h(
+                          'div',
+                          null,
+                          h('div', { style: { ...S.label, marginBottom: 6 } }, TEXT.localBoard),
+                          h(
+                            'div',
+                            { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+                            (snap.localSessions || []).slice(0, 4).map((sess) =>
+                              h(
+                                'div',
+                                { key: sess.id, style: S.board },
+                                h(
+                                  'div',
+                                  { style: S.session },
+                                  h('span', {
+                                    style: {
+                                      ...S.dot,
+                                      width: 5,
+                                      height: 5,
+                                      background:
+                                        sess.status === 'running'
+                                          ? 'var(--dsw-alias-state-success-primary, #3fb950)'
+                                          : 'var(--dsw-alias-state-idle-primary, #8b9096)',
+                                    },
+                                  }),
+                                  h('span', { style: { ...S.ellipsis, maxWidth: 140 } }, sess.label || sess.id),
+                                  h(
+                                    'span',
+                                    { style: { ...S.ellipsis, flex: 1, minWidth: 0 } },
+                                    (sess.status === 'running' ? TEXT.running : TEXT.idle) +
+                                      (sess.tool ? ' · ' + sess.tool : '') +
+                                      (sess.note ? ' · ' + sess.note : ''),
+                                  ),
+                                  h('span', { style: { flex: '0 0 auto' } }, fmtTokens((sess.tokensIn || 0) + (sess.tokensOut || 0)) + ' ' + TEXT.tokens),
+                                ),
+                                (sess.timeline || []).slice(-1).map((t) =>
+                                  h(
+                                    'div',
+                                    { key: t.id, style: S.trailRow },
+                                    h('span', { style: S.trailKind }, t.kind === 'say' ? '说' : t.kind === 'ask' ? '问' : '做'),
+                                    h('span', { style: { ...S.ellipsis, flex: 1, minWidth: 0 } }, (t.tool ? t.tool + ' ' : '') + (t.text || '')),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      : null,
                     h('div', { style: { ...S.label, marginTop: 4 } }, TEXT.joinTitle),
                     h('div', { style: S.label }, TEXT.joinHint),
                     h(
@@ -554,6 +648,44 @@ window.__ModuleLoader__.load({
                         mode === 'host'
                           ? h(
                               'div',
+                              { style: { ...S.row, gap: 6 } },
+                              h('input', {
+                                style: S.input,
+                                placeholder: TEXT.publicPlaceholder,
+                                value: publicBase,
+                                onChange: (e) => setPublicBase(e.target.value),
+                              }),
+                              h(
+                                'button',
+                                {
+                                  type: 'button',
+                                  style: S.btn,
+                                  disabled: busy || !publicBase.trim(),
+                                  onClick: async () => {
+                                    const saved = await call('/settings', { publicBaseUrl: publicBase.trim() })
+                                    if (saved) setNotice(TEXT.publicSaved)
+                                  },
+                                },
+                                TEXT.publicSave,
+                              ),
+                              h(
+                                'button',
+                                {
+                                  type: 'button',
+                                  style: S.btn,
+                                  disabled: busy,
+                                  onClick: async () => {
+                                    const result = await call('/public-url/check', { publicBaseUrl: publicBase.trim() })
+                                    setNotice(result && result.ok ? TEXT.publicOk : TEXT.publicBad)
+                                  },
+                                },
+                                TEXT.publicCheck,
+                              ),
+                            )
+                          : null,
+                        mode === 'host'
+                          ? h(
+                              'div',
                               { style: { ...S.row, gap: 8 } },
                               h(
                                 'button',
@@ -587,7 +719,12 @@ window.__ModuleLoader__.load({
                             'div',
                             { style: { flex: '1 1 200px', minWidth: 180, display: 'flex', flexDirection: 'column', gap: 6 } },
                             h('div', { style: S.label }, TEXT.scanHint),
-                            h('div', { style: S.linkBox }, invite.primaryUrl),
+                            h(
+                              'div',
+                              { style: S.linkLine, title: invite.primaryUrl },
+                              h('span', { style: S.linkText }, invite.primaryUrl),
+                              h('button', { type: 'button', style: { ...S.linkBtn, marginLeft: 0 }, onClick: () => copy(invite.primaryUrl, 'link') }, copied === 'link' ? TEXT.copied : '复制'),
+                            ),
                             h(
                               'div',
                               { style: S.row },

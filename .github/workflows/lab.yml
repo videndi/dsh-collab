@@ -30,5 +30,7 @@ jobs:
           node --check qr.js
       - name: lab (offline, loopback only)
         run: node scripts/lab.mjs
+      - name: standalone relay
+        run: node scripts/relay-check.mjs
       - name: qr round-trip only
         run: node scripts/selftest.mjs --qr-only

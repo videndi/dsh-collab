@@ -20,6 +20,9 @@ import { join } from 'node:path'
 import { encodeMatrix } from '../qr.js'
 import { decodeMatrix } from './qr-decode.mjs'
 
+// 设置文件写到临时目录，避免污染真实 DSH home
+process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-collab-home-'))
+
 const results = []
 
 async function step(name, fn) {
@@ -106,6 +109,21 @@ async function main() {
       return `${text.length} 字节`
     })
 
+    await step('固定公网地址：保存后邀请链接一直用它', async () => {
+      const fixed = 'https://yg-collab.tail60173.ts.net'
+      const saved = await post(host.origin, '/dsh-collab/api/settings', { publicBaseUrl: fixed })
+      assert(saved.status === 200, `保存 ${saved.status}`)
+      const state = await json(host.origin, '/dsh-collab/api/state')
+      assert(state.body.invite.channel === 'public', `channel=${state.body.invite.channel}`)
+      assert(state.body.invite.primaryUrl.startsWith(fixed), `primaryUrl=${state.body.invite.primaryUrl}`)
+      const decoded = decodeMatrix(encodeMatrix(state.body.invite.primaryUrl, 'M'))
+      assert(decoded.text === state.body.invite.primaryUrl, '二维码没跟着换')
+      await post(host.origin, '/dsh-collab/api/settings', { publicBaseUrl: '' })
+      const cleared = await json(host.origin, '/dsh-collab/api/state')
+      assert(cleared.body.invite.channel !== 'public', '清空后没收回')
+      return fixed
+    })
+
     await step('错误邀请码被拒绝', async () => {
       const { status } = await post(host.origin, '/dsh-collab/relay/join', { code: 'ZZZZZZ', name: '冒名' })
       assert(status === 403, `期望 403，得到 ${status}`)
@@ -118,6 +136,7 @@ async function main() {
         relay: `${host.origin}/dsh-collab/relay`,
         code,
         name: '实验成员',
+        create: true,
       })
       assert(status === 200, `状态 ${status} ${JSON.stringify(body).slice(0, 120)}`)
       assert(body.mode === 'guest', '成员实例 mode 不是 guest')

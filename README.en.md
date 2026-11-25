@@ -27,6 +27,31 @@ another member's transcript.
 The tunnel only exposes the plugin's own small service (`/dsh-collab/relay/*` and the invite landing page), never
 the DSH Web UI. It dies with the Host process.
 
+### Topology: who relays
+
+| Topology | Who must stay online | Invite link | Good for |
+|---|---|---|---|
+| Built-in relay (default) | the owner's DSH process | temporary: loopback / LAN IP / trycloudflare | quick sessions with a few people |
+| **Standalone relay** (recommended) | one machine running `relay-server.mjs` | stable: whatever domain you point at it | long-lived team board; anyone can leave |
+| No relay (personal board) | only your own DSH | none needed | watching your own progress |
+
+The standalone relay only moves room state and progress: **no model calls, no account needed**. So "I am not signed
+in / I closed my DSH" never blocks a teammate.
+
+```bash
+node scripts/relay-server.mjs --port 8787 --host 127.0.0.1
+tailscale funnel 8787        # optional: https://<machine>.<tailnet>.ts.net
+```
+
+Then paste `https://<machine>.<tailnet>.ts.net/dsh-collab/relay` plus the invite code into "join someone's room".
+An unknown room is created on the fly (create defaults to true), so anyone can open the first room.
+
+### Stable address
+
+Fill "fixed address" in the panel with a URL that reaches `/dsh-collab/relay`, press save, and the invite link and
+QR code stay on it. The check button requests `/relay/health` immediately. Proxy only the `/dsh-collab/` prefix and
+the DSH UI stays private.
+
 ## Install
 
 Put this directory anywhere, then in your DSH session (Collaboration or Creation preset) ask the agent to run:
