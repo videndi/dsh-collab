@@ -151,7 +151,7 @@ async function main() {
       return `${String(body.body.text).length} 字节`
     })
 
-    await step('客厅隔离：非协作模式会话被中继丢弃', async () => {
+    await step('中继不再按模式过滤（隔离由插件端负责）', async () => {
       await post('/dsh-collab/relay/report', {
         token: tokenA,
         sessions: [
@@ -163,8 +163,8 @@ async function main() {
       const a = snap.body.members.find((m) => m.name === '成员A')
       const ids = (a.sessions || []).map((x) => x.id)
       assert(ids.includes('a-s1'), '协作会话丢了')
-      assert(!ids.includes('a-standard'), '标准模式会话竟然进了客厅')
-      return `客厅只有 ${ids.join(',')}`
+      assert(ids.includes('a-standard'), '标准会话应当保留，否则旧版插件会被挡在外面')
+      return '保留 ' + ids.join(',')
     })
 
     await step('消息双向', async () => {

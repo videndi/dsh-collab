@@ -41,6 +41,23 @@ const MAX_MESSAGES = 300
 const TIMELINE_WIRE = 6
 const ARTIFACTS_WIRE = 6
 const MEMBER_STALE_MS = 15000
+// 超过这个时间没有任何上报的成员，直接从房间里删掉（否则旧 token / 掉线残留会让"几人"虚高）
+const MEMBER_TTL_MS = 10 * 60_000
+
+function pruneMembers(room) {
+  if (!room || !room.members) return 0
+  let removed = 0
+  for (const [id, member] of room.members) {
+    if (now() - (member.updatedAt || 0) > MEMBER_TTL_MS) {
+      room.members.delete(id)
+      for (const [token, owner] of room.tokens) {
+        if (owner === id) room.tokens.delete(token)
+      }
+      removed += 1
+    }
+  }
+  return removed
+}
 
 const now = () => Date.now()
 const shortId = (prefix = 'm') => `${prefix}_${randomBytes(6).toString('hex')}`
@@ -435,6 +452,7 @@ function handleRelay(sub, req, res) {
       json(res, 404, { error: 'room not found' })
       return
     }
+    pruneMembers(room)
     const members = [...room.members.values()].map((member) => ({
       id: member.id,
       name: member.name,
