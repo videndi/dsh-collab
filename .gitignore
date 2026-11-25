@@ -9,3 +9,7 @@ dist/
 relay.log
 relay.err.log
 tunnel.log
+scripts/autostart-*.vbs
+scripts/run-relay.ps1
+scripts/run-tunnel.ps1
+scripts/tunnel-up.cmd

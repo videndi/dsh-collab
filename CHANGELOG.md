@@ -1,3 +1,8 @@
+# 0.6.2
+
+- 修独立 relay 的 join 返回值（`memberId` 未定义导致 500）。
+- 本机常驻：`scripts/autostart-*.vbs` 配合 HKCU Run，登录即启动 relay 与公网隧道（无需管理员权限）。
+
 # 0.6.1
 
 - **一人一个身份**：本机生成稳定的 `installId`（存设置里），加入房间时带上去重，

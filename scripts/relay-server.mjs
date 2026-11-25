@@ -286,7 +286,7 @@ function handleRelay(sub, req, res) {
       room.updatedAt = now()
       json(res, 200, {
         token,
-        self: { id: memberId, name: member.name },
+        self: { id: member.id, name: member.name },
         room: { id: room.id, code: room.code },
         messages: room.messages.slice(-MAX_MESSAGES),
       })
