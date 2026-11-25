@@ -46,6 +46,12 @@ export const name = 'dsh-collab'
 export const inject = ['webServer']
 
 const BASE = '/dsh-collab'
+
+/**
+ * 团队默认中继：装好插件不用填地址，输房间号就能进。
+ * 想换中继，面板「第 0 步」里改一次即可（会覆盖这里）。
+ */
+const DEFAULT_HOME_RELAY = 'http://124.223.178.145/dsh-collab/relay'
 const MAX_SESSIONS = 40
 const MAX_MESSAGES = 300
 const IDLE_HIDE_MS = 6 * 60 * 60 * 1000
@@ -282,7 +288,10 @@ export function apply(ctx) {
     // 固定公网地址（Tailscale Funnel / nginx / 固定隧道），设了就用它生成邀请链接
     publicBaseUrl: typeof persisted.publicBaseUrl === 'string' ? persisted.publicBaseUrl : '',
     // 全团队只配一次的中继地址（配好后，加入只需要房间号，像搜微信号）
-    homeRelay: typeof persisted.homeRelay === 'string' ? persisted.homeRelay : '',
+    homeRelay:
+      typeof persisted.homeRelay === 'string' && persisted.homeRelay
+        ? persisted.homeRelay
+        : DEFAULT_HOME_RELAY,
     // 问答分离：默认不把模型的输出片段发给房间，只共享「做了什么 + 交付了什么」
     shareTranscript: persisted.shareTranscript === true,
     mode: 'offline', // offline | host | guest
