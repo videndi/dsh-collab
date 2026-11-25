@@ -8,3 +8,4 @@ Thumbs.db
 dist/
 relay.log
 relay.err.log
+tunnel.log
