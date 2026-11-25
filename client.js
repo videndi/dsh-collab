@@ -468,6 +468,8 @@ window.__ModuleLoader__.load({
 
       const call = async (path, body) => {
         setBusy(true)
+        // 看门狗：任何请求卡住 15 秒就强行解锁，避免按钮一直灰着点不动
+        const watchdog = setTimeout(() => setBusy(false), 15000)
         try {
           const res = await fetch(API + path, {
             method: 'POST',
@@ -477,6 +479,7 @@ window.__ModuleLoader__.load({
                 ? { ...(body || {}), sessionId: String(props.sessionId) }
                 : body || {},
             ),
+            signal: AbortSignal.timeout(9000),
           })
           const data = await res.json().catch(() => ({}))
           if (!res.ok) {
@@ -484,7 +487,10 @@ window.__ModuleLoader__.load({
             return null
           }
           setError('')
-          const state = await fetch(API + '/state')
+          const sid = props && props.sessionId ? String(props.sessionId) : ''
+          const state = await fetch(API + '/state' + (sid ? '?session=' + encodeURIComponent(sid) : ''), {
+            signal: AbortSignal.timeout(9000),
+          })
             .then((r) => (r.ok ? r.json() : null))
             .catch(() => null)
           if (state) setSnap(state)
@@ -493,6 +499,7 @@ window.__ModuleLoader__.load({
           setError(String(e && e.message ? e.message : e))
           return null
         } finally {
+          clearTimeout(watchdog)
           setBusy(false)
         }
       }
@@ -671,7 +678,7 @@ window.__ModuleLoader__.load({
                       h('button', {
                         type: 'button',
                         style: S.btn,
-                        disabled: busy || !roomCode.trim(),
+                        disabled: busy,
                         onClick: async () => {
                           const result = await call('/discover', { code: roomCode.trim() })
                           if (result && result.found) setFound(result.room)
@@ -690,7 +697,9 @@ window.__ModuleLoader__.load({
                             style: { ...S.btnPrimary, marginTop: 6 },
                             disabled: busy,
                             onClick: async () => {
-                              const ok = await call('/join', { code: found.code })
+                              const ok = sessionMode
+                                ? await call('/session/join', { sessionId: String(props.sessionId || ''), code: found.code })
+                                : await call('/join', { code: found.code })
                               if (ok) {
                                 setFound(null)
                                 setRoomCode('')
