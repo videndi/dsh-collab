@@ -59,7 +59,7 @@ function roomCode(existing) {
 const rooms = new Map()
 // ── 落盘：房间与消息存到 data/rooms.json，中继重启后房间还在 ──────────────
 const ROOT_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
-const DATA_DIR = join(ROOT_DIR, 'data')
+const DATA_DIR = process.env.RELAY_DATA_DIR ? String(process.env.RELAY_DATA_DIR) : join(ROOT_DIR, 'data')
 const ROOMS_FILE = join(DATA_DIR, 'rooms.json')
 let saveTimer = null
 

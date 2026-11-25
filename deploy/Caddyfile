@@ -1,0 +1,15 @@
+# Caddyfile —— 给 relay 配一个固定 https 域名（自动签证书）
+#
+# 用法：
+#   1. 把 relay.your-domain.com 解析到这台机器
+#   2. caddy run --config Caddyfile
+#
+# 之后团队填的 relay 地址就是：
+#   https://relay.your-domain.com/dsh-collab/relay
+
+relay.your-domain.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8790
+	# 只代理 /dsh-collab/ 前缀更安全；Caddy 不支持按路径转发到不同上游，
+	# 所以这里直接把整个域名给 relay（relay 本身只暴露 /dsh-collab/*，其它路径 404）
+}

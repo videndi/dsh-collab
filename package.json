@@ -1,6 +1,6 @@
 {
   "name": "dsh-collab",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "type": "module",
   "description": "DSH 多人协作研究室：邀请链接/二维码把朋友拉进你的项目，各自用自己的 token，互相能看到对方的进展流与成果文件；支持局域网与跨网段公网隧道，自带离线二维码与实验台。",

@@ -1,3 +1,10 @@
+# 0.6.5
+
+- 新增**独立中继便携包**：只含 relay 与两个页面，解压后 node scripts/relay-server.mjs 即可跑，
+  可放在 VPS / NAS / 任意常开机器上，房主关机也不影响团队。
+- 新增 deploy/：systemd unit、Caddyfile（固定 https 域名）、部署说明。
+- relay 支持 RELAY_DATA_DIR 指定数据目录。
+
 # 0.6.4
 
 - **中继落盘**：房间与消息写 `data/rooms.json`，relay 重启后房间还在（`loadRooms` 恢复，闲置超时自动丢弃）。

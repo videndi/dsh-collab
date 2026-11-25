@@ -1,0 +1,19 @@
+[Unit]
+Description=dsh-collab relay (room + progress relay for DeepSeek Harness)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 改成正运行用户
+User=dsh
+WorkingDirectory=/opt/dsh-collab-relay
+Environment=RELAY_DATA_DIR=/var/lib/dsh-collab
+ExecStart=/usr/bin/node /opt/dsh-collab-relay/scripts/relay-server.mjs --port 8790 --host 0.0.0.0 --rooms 64
+Restart=always
+RestartSec=3
+# 稳定性：别让 OOM/异常把它带走
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
