@@ -49,6 +49,19 @@ under the composer.
 5. Each member card shows: who is running, which tool, latest activity, turn, tokens; plus the room total.
 6. Alone? Click **on-machine lab** to spawn two simulated members over real loopback HTTP.
 
+## Watching each other's progress and results
+
+Member cards carry two shared surfaces:
+
+**Live trail** (automatic, no model cooperation) — folded from `session/event`, newest few shown per session:
+`did` = tool call with an argument summary (command, file path, grep pattern, query…),
+`said` = a 280-char slice of the model's step output, `asked` = a 200-char slice of the user input.
+
+**Results** — files delivered by `write` / `edit` / `present`, plus anything you push from the panel's share
+box, are registered as artifacts. Text files up to 32KB travel with their body, so a teammate can open your
+report or code right in the panel; bigger files only sync path and size. Bodies are visible to room members
+only, and only for the files that were registered — transcripts and unrelated files are never read.
+
 ## Self-check and lab (no DSH process needed)
 
 ```bash

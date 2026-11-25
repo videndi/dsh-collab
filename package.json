@@ -1,9 +1,9 @@
 {
   "name": "dsh-collab",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "DSH 多人协作研究室：邀请链接/二维码把朋友拉进你的项目，各自用自己的 token 跑研究，实时同步每个人的会话进度；支持局域网与跨网段公网隧道，自带离线二维码与实验台。",
+  "description": "DSH 多人协作研究室：邀请链接/二维码把朋友拉进你的项目，各自用自己的 token，互相能看到对方的进展流与成果文件；支持局域网与跨网段公网隧道，自带离线二维码与实验台。",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -49,12 +49,18 @@
     "selftest": "node scripts/selftest.mjs"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
     },
-    "engines": { "dsh": ">=0.2.1-rc.1" }
+    "engines": {
+      "dsh": ">=0.2.1-rc.1"
+    }
   }
 }

@@ -33,7 +33,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { homedir, hostname, networkInterfaces, userInfo } from 'node:os'
 import { dirname, join as joinPath } from 'node:path'
@@ -51,6 +51,12 @@ const IDLE_HIDE_MS = 6 * 60 * 60 * 1000
 const GUEST_TICK_MS = 2000
 const MEMBER_STALE_MS = 15000
 const LAB_TICK_MS = 1400
+const MAX_TIMELINE = 24
+const MAX_ARTIFACTS = 12
+const MAX_ARTIFACT_BYTES = 32 * 1024
+// 快照每 2 秒推一次：上行的条目数要克制（本机仍保留更多历史，只是不往外发）
+const TIMELINE_WIRE = 6
+const ARTIFACTS_WIRE = 6
 
 const now = () => Date.now()
 
@@ -400,6 +406,128 @@ export function apply(ctx) {
 
   // ── 本机会话进度 ──────────────────────────────────────────────────────
 
+  function basenameOf(path) {
+    const parts = String(path).split(/[\\/]+/).filter(Boolean)
+    return (parts[parts.length - 1] || String(path)).slice(0, 120)
+  }
+
+  /** 把一次工具调用折成一行人话，让队友看得懂“他在干什么”。 */
+  function summarizeToolArgs(name, raw) {
+    let args = null
+    try {
+      args = raw ? JSON.parse(String(raw)) : null
+    } catch {
+      args = null
+    }
+    if (!args || typeof args !== 'object') return String(raw || '').slice(0, 120)
+    const pick = (key, max = 100) => (typeof args[key] === 'string' ? args[key].replace(/\s+/g, ' ').slice(0, max) : '')
+    if (name === 'bash' || name === 'pwsh' || name === 'win_bash') return pick('command', 140)
+    if (name === 'read' || name === 'write' || name === 'edit') return pick('file_path', 140) || pick('path', 140)
+    if (name === 'grep') return (pick('pattern', 70) + (args.path ? '  @ ' + pick('path', 70) : '')).trim()
+    if (name === 'web_search') return pick('query', 120)
+    if (name === 'web_fetch') return pick('url', 120)
+    if (name === 'subagent' || name === 'subagent_fork') return pick('description', 120) || pick('prompt', 120)
+    if (name === 'present') return pick('description', 120) || pick('path', 120)
+    if (name === 'todo_write') return '更新任务清单'
+    return pick('description', 120) || pick('query', 120) || pick('command', 100)
+  }
+
+  function pushTimeline(rec, entry) {
+    rec.timeline.push({ id: randomBytes(4).toString('hex'), at: now(), ...entry })
+    if (rec.timeline.length > MAX_TIMELINE) rec.timeline.splice(0, rec.timeline.length - MAX_TIMELINE)
+  }
+
+  /** 把一次交付（present / write / edit）里的文件登记成“成果”，带一段正文供队友预览。 */
+  function addArtifactFromPath(rec, path, tool, force = false) {
+    const clean = String(path || '').trim()
+    if (!clean) return
+    const existing = rec.artifacts.find((item) => item.path === clean)
+    if (existing && !force) {
+      existing.at = now()
+      existing.tool = tool
+      return
+    }
+    if (existing && force) {
+      existing.at = now()
+      existing.tool = tool
+    }
+    const artifact = existing || {
+      id: randomBytes(4).toString('hex'),
+      path: clean.slice(0, 240),
+      title: basenameOf(clean),
+      tool,
+      at: now(),
+      bytes: null,
+      text: null,
+      truncated: false,
+      note: null,
+    }
+    try {
+      const stat = statSync(clean)
+      artifact.bytes = stat.size
+      if (!stat.isFile()) {
+        artifact.note = '不是普通文件'
+      } else if (stat.size <= MAX_ARTIFACT_BYTES) {
+        const body = readFileSync(clean, 'utf8')
+        artifact.text = body.slice(0, MAX_ARTIFACT_BYTES)
+        artifact.truncated = body.length > MAX_ARTIFACT_BYTES
+      } else {
+        artifact.note = '文件超过 32KB，只同步元数据'
+      }
+    } catch {
+      artifact.note = '读取失败（可能已移动，或不是文本）'
+    }
+    rec.artifacts.unshift(artifact)
+    if (rec.artifacts.length > MAX_ARTIFACTS) rec.artifacts.length = MAX_ARTIFACTS
+  }
+
+  function registerArtifactFromCall(rec, call) {
+    let args = null
+    try {
+      args = call && call.args ? JSON.parse(String(call.args)) : null
+    } catch {
+      args = null
+    }
+    if (!args || typeof args !== 'object') return
+    const paths = []
+    for (const key of ['file_path', 'path', 'file', 'target']) {
+      if (typeof args[key] === 'string' && args[key]) paths.push(args[key])
+    }
+    if (Array.isArray(args.files)) {
+      for (const item of args.files) {
+        if (typeof item === 'string') paths.push(item)
+        else if (item && typeof item.path === 'string') paths.push(item.path)
+      }
+    }
+    for (const path of [...new Set(paths)].slice(0, 4)) addArtifactFromPath(rec, path, call.name)
+  }
+
+  function localArtifactBodies() {
+    const out = {}
+    for (const rec of localSessions.values()) {
+      if (!rec.artifacts.length) continue
+      const bucket = {}
+      for (const art of rec.artifacts) if (typeof art.text === 'string') bucket[art.id] = art.text
+      if (Object.keys(bucket).length) out[rec.id] = bucket
+    }
+    return out
+  }
+
+  function findArtifact(memberId, sessionId, artifactId) {
+    if (memberId === state.self.id) {
+      const rec = localSessions.get(String(sessionId))
+      const art = rec && rec.artifacts.find((item) => item.id === artifactId)
+      return art ? { ...art } : null
+    }
+    const member = relayMembers.get(memberId)
+    if (!member) return null
+    const session = (member.sessions || []).find((item) => item.id === sessionId)
+    const meta = session && (session.artifacts || []).find((item) => item.id === artifactId)
+    if (!meta) return null
+    const bodies = (member.artifactBodies && member.artifactBodies[sessionId]) || {}
+    return { ...meta, text: Object.prototype.hasOwnProperty.call(bodies, artifactId) ? bodies[artifactId] : null }
+  }
+
   function ensureLocal(session) {
     const id = String(session.id)
     let rec = localSessions.get(id)
@@ -415,6 +543,9 @@ export function apply(ctx) {
         turn: 0,
         tokensIn: 0,
         tokensOut: 0,
+        timeline: [],
+        artifacts: [],
+        callArgs: new Map(),
         at: now(),
       }
       localSessions.set(id, rec)
@@ -438,6 +569,8 @@ export function apply(ctx) {
         tokensIn: rec.tokensIn,
         tokensOut: rec.tokensOut,
         at: rec.at,
+        timeline: rec.timeline.slice(-TIMELINE_WIRE),
+        artifacts: rec.artifacts.slice(0, ARTIFACTS_WIRE).map(({ text, ...meta }) => meta),
       }))
   }
 
@@ -626,22 +759,39 @@ export function apply(ctx) {
       case 'step/start':
         rec.status = 'running'
         break
-      case 'tool/call':
+      case 'tool/call': {
         rec.status = 'running'
-        rec.tool = typeof data.name === 'string' ? data.name : rec.tool
+        const name = typeof data.name === 'string' ? data.name : 'tool'
+        rec.tool = name
+        pushTimeline(rec, { kind: 'tool', tool: name, text: summarizeToolArgs(name, data.arguments) })
+        if (data.callId) rec.callArgs.set(String(data.callId), { name, args: data.arguments })
         break
-      case 'tool/result':
+      }
+      case 'tool/result': {
+        const callId = data.message && data.message.source ? String(data.message.source.callId || '') : ''
+        const call = callId ? rec.callArgs.get(callId) : undefined
+        if (callId) rec.callArgs.delete(callId)
+        if (call && (call.name === 'present' || call.name === 'write' || call.name === 'edit')) {
+          registerArtifactFromCall(rec, call)
+        }
         if (data.error) rec.tool = `${rec.tool || 'tool'} ✗`
         break
-      case 'assistant/message':
+      }
+      case 'assistant/message': {
         if (data.usage) {
           rec.tokensIn += Number(data.usage.inputTokens) || 0
           rec.tokensOut += Number(data.usage.outputTokens) || 0
         }
+        const said = textOfBlocks(data.message && data.message.content).trim()
+        if (said) pushTimeline(rec, { kind: 'say', text: said.slice(0, 280) })
         break
+      }
       case 'user/message': {
         const text = textOfBlocks(data.content).trim()
-        if (text) rec.note = text.slice(0, 160)
+        if (text) {
+          rec.note = text.slice(0, 160)
+          pushTimeline(rec, { kind: 'ask', text: text.slice(0, 200) })
+        }
         break
       }
       case 'turn/end':
@@ -706,7 +856,42 @@ export function apply(ctx) {
       tokensIn: Number(item.tokensIn) || 0,
       tokensOut: Number(item.tokensOut) || 0,
       at: Number(item.at) || now(),
+      timeline: Array.isArray(item.timeline)
+        ? item.timeline.slice(-TIMELINE_WIRE).map((entry) => ({
+            id: String(entry.id || ''),
+            at: Number(entry.at) || now(),
+            kind: entry.kind === 'say' || entry.kind === 'ask' ? entry.kind : 'tool',
+            tool: entry.tool ? String(entry.tool).slice(0, 48) : null,
+            text: entry.text ? String(entry.text).slice(0, 280) : '',
+          }))
+        : [],
+      artifacts: Array.isArray(item.artifacts)
+        ? item.artifacts.slice(0, ARTIFACTS_WIRE).map((art) => ({
+            id: String(art.id || ''),
+            path: String(art.path || '').slice(0, 240),
+            title: String(art.title || '').slice(0, 120),
+            tool: art.tool ? String(art.tool).slice(0, 32) : null,
+            at: Number(art.at) || now(),
+            bytes: Number(art.bytes) || null,
+            truncated: !!art.truncated,
+            note: art.note ? String(art.note).slice(0, 120) : null,
+          }))
+        : [],
     }))
+
+    // 产物正文单独存（不进快照，按需取）
+    const bodies = body.artifactBodies && typeof body.artifactBodies === 'object' ? body.artifactBodies : null
+    if (bodies) {
+      member.artifactBodies = member.artifactBodies || {}
+      for (const [sessionId, map] of Object.entries(bodies)) {
+        if (!map || typeof map !== 'object') continue
+        const bucket = member.artifactBodies[String(sessionId)] || {}
+        for (const [artifactId, text] of Object.entries(map)) {
+          if (typeof text === 'string') bucket[String(artifactId)] = text.slice(0, MAX_ARTIFACT_BYTES)
+        }
+        member.artifactBodies[String(sessionId)] = bucket
+      }
+    }
     member.updatedAt = now()
     member.online = true
     if (body.name) member.name = String(body.name).slice(0, 40)
@@ -733,7 +918,12 @@ export function apply(ctx) {
       const response = await fetch(`${base}/report`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ token: state.token, name: state.self.name, sessions: localSessionViews() }),
+        body: JSON.stringify({
+          token: state.token,
+          name: state.self.name,
+          sessions: localSessionViews(),
+          artifactBodies: localArtifactBodies(),
+        }),
       })
       if (!response.ok) return
       await response.json()
@@ -888,6 +1078,45 @@ export function apply(ctx) {
       sendJson(res, 200, snapshot())
       return
     }
+    if (sub === '/api/artifact' && req.method === 'GET') {
+      const url = new URL(req.url || '/', 'http://localhost')
+      const memberId = url.searchParams.get('member') || ''
+      const sessionId = url.searchParams.get('session') || ''
+      const artifactId = url.searchParams.get('aid') || ''
+      if (!memberId || !sessionId || !artifactId) {
+        sendJson(res, 400, { error: 'member / session / aid 都要给' })
+        return
+      }
+      if (state.mode === 'guest' && state.relayUrl && state.token && memberId !== state.self.id) {
+        try {
+          const upstream = `${state.relayUrl.replace(/\/+$/, '')}/artifact?token=${encodeURIComponent(state.token)}&member=${encodeURIComponent(memberId)}&session=${encodeURIComponent(sessionId)}&aid=${encodeURIComponent(artifactId)}`
+          const response = await fetch(upstream)
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || !payload) {
+            sendJson(res, response.status || 502, { error: (payload && payload.error) || '取不到对方的产物' })
+            return
+          }
+          sendJson(res, 200, payload)
+        } catch (error) {
+          sendJson(res, 502, { error: String(error && error.message ? error.message : error) })
+        }
+        return
+      }
+      const artifact = findArtifact(memberId, sessionId, artifactId)
+      if (!artifact) {
+        sendJson(res, 404, { error: '没有这个产物' })
+        return
+      }
+      sendJson(res, 200, {
+        title: artifact.title,
+        path: artifact.path,
+        bytes: artifact.bytes,
+        truncated: !!artifact.truncated,
+        note: artifact.note || null,
+        text: typeof artifact.text === 'string' ? artifact.text : null,
+      })
+      return
+    }
     if (sub === '/api/tunnel/probe' && req.method === 'GET') {
       sendJson(res, 200, tunnelView())
       return
@@ -1001,6 +1230,26 @@ export function apply(ctx) {
       sendJson(res, 200, { ok: true, ...result, snapshot: snapshot() })
       return
     }
+    if (sub === '/api/share') {
+      const target = String(body.path || '').trim()
+      if (!target) {
+        sendJson(res, 400, { error: '需要文件路径' })
+        return
+      }
+      const rec = [...localSessions.values()].sort((a, b) => b.at - a.at)[0]
+      if (!rec) {
+        sendJson(res, 409, { error: '还没有会话：先在协作模式里跑一次，或直接填一个文件路径' })
+        return
+      }
+      addArtifactFromPath(rec, target, 'share', true)
+      const shared = rec.artifacts.find((item) => item.path === target)
+      bump()
+      sendJson(res, 200, {
+        ok: true,
+        artifact: shared ? { id: shared.id, path: shared.path, title: shared.title, bytes: shared.bytes, note: shared.note || null } : null,
+      })
+      return
+    }
     if (sub === '/api/tunnel/start') {
       const result = await tunnelStart()
       const view = tunnelView()
@@ -1057,6 +1306,32 @@ export function apply(ctx) {
     if (sub === '/relay/report' && req.method === 'POST') {
       const result = relayReport(await readJson(req))
       sendJson(res, result.status, result.value)
+      return
+    }
+    if (sub === '/relay/artifact' && req.method === 'GET') {
+      const url = new URL(req.url || '/', 'http://localhost')
+      const member = relayMemberFor(url.searchParams.get('token') || '')
+      if (!member) {
+        sendJson(res, 403, { error: 'unknown member' })
+        return
+      }
+      const artifact = findArtifact(
+        url.searchParams.get('member') || '',
+        url.searchParams.get('session') || '',
+        url.searchParams.get('aid') || '',
+      )
+      if (!artifact) {
+        sendJson(res, 404, { error: 'no artifact' })
+        return
+      }
+      sendJson(res, 200, {
+        title: artifact.title,
+        path: artifact.path,
+        bytes: artifact.bytes,
+        truncated: !!artifact.truncated,
+        note: artifact.note || null,
+        text: typeof artifact.text === 'string' ? artifact.text : null,
+      })
       return
     }
     if (sub === '/relay/message' && req.method === 'POST') {

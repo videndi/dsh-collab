@@ -14,6 +14,9 @@
  * 全程 127.0.0.1，不访问任何外部地址。
  */
 import { createCollabHost, makeSession } from './harness.mjs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { encodeMatrix } from '../qr.js'
 import { decodeMatrix } from './qr-decode.mjs'
 
@@ -139,6 +142,62 @@ async function main() {
       assert(guest.sessions[0].tool === 'bash', `成员进度工具不对：${guest.sessions[0].tool}`)
       assert(guest.sessions[0].tokensIn >= 1350, '成员 token 没累计')
       return `${names.join(' / ')}，成员会话 ${guest.sessions[0].label} · ${guest.sessions[0].tool} · ${guest.sessions[0].tokensIn} tok`
+    })
+
+    await step('进度可见：队友能看到对方的动作与发言（timeline）', async () => {
+      const hostSession = makeSession('sess-host-1', 'D:/work/alpha')
+      host.fireSessionEvent(hostSession, { type: 'tool/call', data: { turn: 3, step: 1, callId: 'c9', name: 'grep', arguments: JSON.stringify({ pattern: 'createRoom', path: 'src/index.js' }) } })
+      host.fireSessionEvent(hostSession, { type: 'assistant/message', data: { turn: 3, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '找到房间创建入口了，接下来改路由层。' }] }, stream: [], usage: { inputTokens: 300, outputTokens: 40 } } })
+      await wait(2400)
+      const state = await json(peer.origin, '/dsh-collab/api/state')
+      const owner = state.body.members.find((m) => m.name === '实验房主')
+      assert(owner, '成员侧看不到房主')
+      const session = owner.sessions.find((s) => s.id === 'sess-host-1')
+      assert(session, '房主的会话卡不在')
+      const kinds = (session.timeline || []).map((t) => t.kind)
+      assert(kinds.includes('tool'), '没有工具动作条目')
+      const calls = (session.timeline || []).filter((t) => t.kind === 'tool').map((t) => t.text).join('|')
+      assert(calls.includes('createRoom') || calls.includes('grep'), '工具摘要不对：' + calls)
+      assert(kinds.includes('say'), '没有发言条目')
+      const said = (session.timeline || []).filter((t) => t.kind === 'say').map((t) => t.text).join('|')
+      assert(said.includes('找到房间创建入口'), '发言内容没同步：' + said)
+      return `${session.timeline.length} 条进展`
+    })
+
+    await step('成果可见：present/write 的产物带正文同步', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'dsh-collab-'))
+      const file = join(dir, 'report.md')
+      writeFileSync(file, '# 结论\n\n房间入口在 src/index.js 的 createRoom。\n', 'utf8')
+      const session = makeSession('sess-host-1', 'D:/work/alpha')
+      host.fireSessionEvent(session, { type: 'tool/call', data: { turn: 4, step: 1, callId: 'w1', name: 'write', arguments: JSON.stringify({ file_path: file, content: 'x' }) } })
+      host.fireSessionEvent(session, { type: 'tool/result', data: { turn: 4, step: 1, message: { role: 'tool', source: { kind: 'tool', callId: 'w1' }, content: [] } } })
+      await wait(2400)
+      const state = await json(peer.origin, '/dsh-collab/api/state')
+      const owner = state.body.members.find((m) => m.name === '实验房主')
+      const sess = owner.sessions.find((s) => s.id === 'sess-host-1')
+      const artifact = (sess.artifacts || []).find((a) => a.path === file)
+      assert(artifact, '产物没登记：' + JSON.stringify((sess.artifacts || []).map((a) => a.path)))
+      assert(artifact.title === 'report.md', '标题不对：' + artifact.title)
+      assert(artifact.bytes > 10, '大小没读到')
+      const body = await json(peer.origin, `/dsh-collab/api/artifact?member=${encodeURIComponent(owner.id)}&session=sess-host-1&aid=${encodeURIComponent(artifact.id)}`)
+      assert(body.status === 200, `取正文 ${body.status}`)
+      assert(String(body.body.text || '').includes('createRoom'), '正文没同步：' + String(body.body.text || '').slice(0, 60))
+      return artifact.title + ' · ' + artifact.bytes + ' 字节'
+    })
+
+    await step('手动分享文件（/api/share）', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'dsh-collab-'))
+      const file = join(dir, 'notes.txt')
+      writeFileSync(file, 'shared from panel', 'utf8')
+      const res = await post(host.origin, '/dsh-collab/api/share', { path: file })
+      assert(res.status === 200, `状态 ${res.status} ${JSON.stringify(res.body).slice(0, 120)}`)
+      assert(res.body.artifact && res.body.artifact.title === 'notes.txt', '分享结果不对')
+      await wait(1200)
+      const state = await json(host.origin, '/dsh-collab/api/state')
+      const self = state.body.members.find((m) => m.self)
+      const found = (self.sessions || []).some((s) => (s.artifacts || []).some((a) => a.path === file))
+      assert(found, '分享的产物没进房间')
+      return 'notes.txt'
     })
 
     await step('成员侧也能看到房主的进度（快照回流）', async () => {

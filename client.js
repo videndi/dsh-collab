@@ -52,6 +52,8 @@ window.__ModuleLoader__.load({
       tunnelError: '隧道启动失败：',
       tunnelHint: '公网隧道已开启：朋友在任何网络、任何机器上都能用这个链接加入（隧道随 DSH 关闭失效）。',
       projectLabel: '项目',
+      share: '分享成果',
+      sharePlaceholder: '把本机文件路径贴这里，推到房间里给队友看（≤32KB 文本）',
       roomTotal: '房间合计',
     }
 
@@ -60,6 +62,13 @@ window.__ModuleLoader__.load({
       if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M'
       if (v >= 1000) return (v / 1000).toFixed(1) + 'k'
       return String(v)
+    }
+
+    function fmtBytes(n) {
+      const v = Number(n) || 0
+      if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + 'MB'
+      if (v >= 1024) return (v / 1024).toFixed(1) + 'KB'
+      return v + 'B'
     }
 
     function timeAgo(at) {
@@ -194,6 +203,59 @@ window.__ModuleLoader__.load({
         color: 'var(--dsw-alias-label-tertiary, #8b9096)',
       },
       warn: { fontSize: 11, color: 'var(--dsw-alias-state-warn-primary, #d29922)' },
+      trail: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        marginLeft: 11,
+        paddingLeft: 7,
+        borderLeft: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.28))',
+      },
+      trailRow: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: 'var(--dsw-alias-label-secondary, #9aa0a6)', minWidth: 0 },
+      trailKind: {
+        flex: '0 0 auto',
+        fontSize: 9,
+        padding: '0 4px',
+        borderRadius: 4,
+        background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.14))',
+        color: 'var(--dsw-alias-label-tertiary, #8b9096)',
+      },
+      trailAt: { flex: '0 0 auto', fontSize: 9, color: 'var(--dsw-alias-label-tertiary, #8b9096)' },
+      artifacts: { display: 'flex', flexWrap: 'wrap', gap: 4, marginLeft: 11 },
+      artifact: {
+        fontSize: 10.5,
+        padding: '1px 7px',
+        borderRadius: 999,
+        border: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,.3))',
+        background: 'transparent',
+        color: 'var(--dsw-alias-brand-primary, #4c8dff)',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        maxWidth: 220,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      },
+      preview: {
+        border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.4))',
+        borderRadius: 8,
+        background: 'var(--dsw-alias-bg-base, rgba(0,0,0,.24))',
+        padding: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      },
+      pre: {
+        margin: 0,
+        maxHeight: 260,
+        overflow: 'auto',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: 11,
+        lineHeight: 1.45,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        color: 'var(--dsw-alias-label-primary, #e8eaed)',
+      },
       qrBox: { background: '#fff', padding: 8, borderRadius: 10, lineHeight: 0, flex: '0 0 auto' },
       linkBox: {
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -241,6 +303,8 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState('')
       const [busy, setBusy] = React.useState(false)
       const [copied, setCopied] = React.useState('')
+      const [preview, setPreview] = React.useState(null)
+      const [sharePath, setSharePath] = React.useState('')
       const mounted = React.useRef(true)
       const prefilled = React.useRef(false)
 
@@ -322,6 +386,21 @@ window.__ModuleLoader__.load({
       const messages = (snap && snap.messages) || []
       const lab = (snap && snap.lab) || { running: false, members: [] }
       const tunnelInfo = (snap && snap.tunnel) || null
+
+      const openArtifact = async (member, session, artifact) => {
+        setPreview({ loading: true, title: artifact.title, path: artifact.path, text: '', note: artifact.note })
+        try {
+          const response = await fetch(
+            `${API}/artifact?member=${encodeURIComponent(member.id)}&session=${encodeURIComponent(session.id)}&aid=${encodeURIComponent(artifact.id)}`,
+          )
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || !payload) throw new Error((payload && payload.error) || '取不到内容')
+          if (!mounted.current) return
+          setPreview({ loading: false, title: payload.title, path: payload.path, text: payload.text || '', note: payload.note, truncated: payload.truncated })
+        } catch (error) {
+          if (mounted.current) setPreview({ loading: false, title: artifact.title, path: artifact.path, text: '', note: String(error && error.message ? error.message : error) })
+        }
+      }
       const runningCount = members.reduce(
         (sum, m) => sum + ((m.sessions || []).filter((s) => s.status === 'running').length || 0),
         0,
@@ -544,6 +623,29 @@ window.__ModuleLoader__.load({
                       : null,
                     h(
                       'div',
+                      { style: S.row },
+                      h('input', {
+                        style: S.input,
+                        placeholder: TEXT.sharePlaceholder,
+                        value: sharePath,
+                        onChange: (e) => setSharePath(e.target.value),
+                      }),
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          style: S.btn,
+                          disabled: busy || !sharePath.trim(),
+                          onClick: async () => {
+                            const ok = await call('/share', { path: sharePath.trim() })
+                            if (ok) setSharePath('')
+                          },
+                        },
+                        TEXT.share,
+                      ),
+                    ),
+                    h(
+                      'div',
                       null,
                       h('div', { style: { ...S.label, marginBottom: 6 } }, TEXT.members + ' (' + members.length + ')'),
                       h(
@@ -579,33 +681,92 @@ window.__ModuleLoader__.load({
                                   : (m.sessions || []).slice(0, 6).map((s) =>
                                       h(
                                         'div',
-                                        { key: s.id, style: S.session },
-                                        h('span', {
-                                          style: {
-                                            ...S.dot,
-                                            width: 5,
-                                            height: 5,
-                                            background:
-                                              s.status === 'running'
-                                                ? 'var(--dsw-alias-state-success-primary, #3fb950)'
-                                                : 'var(--dsw-alias-state-idle-primary, #8b9096)',
-                                          },
-                                        }),
-                                        h('span', { style: { ...S.ellipsis, maxWidth: 120 } }, s.label || s.id),
+                                        { key: s.id, style: { display: 'flex', flexDirection: 'column', gap: 3 } },
                                         h(
-                                          'span',
-                                          { style: { ...S.ellipsis, flex: 1, minWidth: 0 } },
-                                          (s.status === 'running' ? TEXT.running : TEXT.idle) +
-                                            (s.tool ? ' · ' + s.tool : '') +
-                                            (s.note ? ' · ' + s.note : ''),
+                                          'div',
+                                          { style: S.session },
+                                          h('span', {
+                                            style: {
+                                              ...S.dot,
+                                              width: 5,
+                                              height: 5,
+                                              background:
+                                                s.status === 'running'
+                                                  ? 'var(--dsw-alias-state-success-primary, #3fb950)'
+                                                  : 'var(--dsw-alias-state-idle-primary, #8b9096)',
+                                            },
+                                          }),
+                                          h('span', { style: { ...S.ellipsis, maxWidth: 120 } }, s.label || s.id),
+                                          h(
+                                            'span',
+                                            { style: { ...S.ellipsis, flex: 1, minWidth: 0 } },
+                                            (s.status === 'running' ? TEXT.running : TEXT.idle) +
+                                              (s.tool ? ' · ' + s.tool : '') +
+                                              (s.note ? ' · ' + s.note : ''),
+                                          ),
+                                          h('span', { style: { flex: '0 0 auto' } }, fmtTokens((s.tokensIn || 0) + (s.tokensOut || 0)) + ' ' + TEXT.tokens),
                                         ),
-                                        h('span', { style: { flex: '0 0 auto' } }, fmtTokens((s.tokensIn || 0) + (s.tokensOut || 0)) + ' ' + TEXT.tokens),
+                                        (s.timeline || []).length
+                                          ? h(
+                                              'div',
+                                              { style: S.trail },
+                                              (s.timeline || []).slice(-4).map((t) =>
+                                                h(
+                                                  'div',
+                                                  { key: t.id, style: S.trailRow },
+                                                  h('span', { style: S.trailKind }, t.kind === 'say' ? '说' : t.kind === 'ask' ? '问' : '做'),
+                                                  h('span', { style: { ...S.ellipsis, flex: 1, minWidth: 0 } },
+                                                    (t.tool ? t.tool + ' ' : '') + (t.text || '')),
+                                                  h('span', { style: S.trailAt }, timeAgo(t.at)),
+                                                ),
+                                              ),
+                                            )
+                                          : null,
+                                        (s.artifacts || []).length
+                                          ? h(
+                                              'div',
+                                              { style: S.artifacts },
+                                              (s.artifacts || []).slice(0, 4).map((a) =>
+                                                h(
+                                                  'button',
+                                                  {
+                                                    key: a.id,
+                                                    type: 'button',
+                                                    style: S.artifact,
+                                                    title: a.path + (a.note ? ' · ' + a.note : ''),
+                                                    onClick: () => openArtifact(m, s, a),
+                                                  },
+                                                  '📄 ' + (a.title || a.id) + (a.bytes ? ' · ' + fmtBytes(a.bytes) : ''),
+                                                ),
+                                              ),
+                                            )
+                                          : null,
                                       ),
                                     ),
                               ),
                             ),
                       ),
                     ),
+                    preview
+                      ? h(
+                          'div',
+                          { style: S.preview },
+                          h(
+                            'div',
+                            { style: { ...S.row, gap: 6 } },
+                            h('span', { style: { fontSize: 11.5, fontWeight: 600, color: 'var(--dsw-alias-label-primary, #e8eaed)' } }, '📄 ' + (preview.title || '成果')),
+                            h('span', { style: { ...S.label, ...S.ellipsis, maxWidth: 240 } }, preview.path || ''),
+                            preview.truncated ? h('span', { style: S.badge }, '已截断') : null,
+                            h('button', { type: 'button', style: { ...S.linkBtn, marginLeft: 'auto' }, onClick: () => setPreview(null) }, '关闭'),
+                          ),
+                          preview.note ? h('div', { style: S.warn }, preview.note) : null,
+                          preview.loading
+                            ? h('div', { style: S.label }, '读取中…')
+                            : preview.text
+                              ? h('pre', { style: S.pre }, preview.text)
+                              : h('div', { style: S.label }, '没有正文（可能不是文本文件，或对方只同步了元数据）'),
+                        )
+                      : null,
                     h(
                       'div',
                       null,
