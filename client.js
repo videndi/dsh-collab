@@ -502,7 +502,8 @@ window.__ModuleLoader__.load({
 
       // 会话级视图：只有「协作模式」会话才渲染任何东西
       const sessionMode = !!(snap && snap.mode === 'session')
-      if (sessionMode && !snap.isCollabSession) return null
+      // 已为这个会话建过房间（有绑定）就一定要显示；只有既非协作模式、又没绑定的会话才完全隐藏
+      if (sessionMode && !snap.isCollabSession && !snap.binding) return null
 
       const effective = sessionMode
         ? {
