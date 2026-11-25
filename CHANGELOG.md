@@ -1,3 +1,8 @@
+# 0.6.6
+
+- 新增 `deploy/install-relay.sh`：Ubuntu/Debian 上一条命令装好中继（Node、服务用户、systemd 自启、崩溃重启、端口放行、自检）。
+  支持 `--port` 与 `--from-zip`（服务器连不上 GitHub 时用离线包）。
+
 # 0.6.5
 
 - 新增**独立中继便携包**：只含 relay 与两个页面，解压后 node scripts/relay-server.mjs 即可跑，

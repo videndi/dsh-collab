@@ -1,5 +1,21 @@
 # dsh-collab relay（独立中继）
 
+## 一键部署（Ubuntu / Debian 服务器）
+
+买一台最便宜的 1 核 1G 云服务器（Ubuntu 22.04/24.04），SSH 上去执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/videndi/dsh-collab/main/deploy/install-relay.sh -o install-relay.sh
+sudo bash install-relay.sh
+```
+
+脚本会装 Node、建服务用户、注册 systemd（开机自启 + 崩溃自动重启）、放行端口，最后打印团队要填的中继地址。
+
+- 换端口：`sudo bash install-relay.sh --port 9000`
+- 服务器连不上 GitHub：先把 `dist/dsh-collab-relay-*.zip` scp 上去，再 `sudo bash install-relay.sh --from-zip /root/dsh-collab-relay.zip`
+- 云厂商的**安全组**要放行同一端口（入站），脚本只能放行系统防火墙
+
+
 一个只做"房间与进度中转"的小服务：**不调模型、不需要账号、不需要登录**。
 把它放在一台常开的机器上（VPS / NAS / 队友的电脑），团队随时都能进房间，房主开不开机都不影响。
 
