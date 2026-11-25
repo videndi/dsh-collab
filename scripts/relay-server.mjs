@@ -260,19 +260,29 @@ function handleRelay(sub, req, res) {
           rooms.set(code, room)
         }
       }
-      const memberId = shortId('g')
-      const token = randomBytes(16).toString('hex')
-      const member = {
-        id: memberId,
-        name: String(body.name || 'guest').slice(0, 40),
-        machine: String(body.machine || '').slice(0, 60),
-        online: true,
-        self: false,
-        updatedAt: now(),
-        sessions: [],
+      // 同一个人（同一台机器）重复加入时复用已有成员，客厅里不会出现两个"我"
+      const deviceId = String(body.deviceId || '').slice(0, 64)
+      let member = deviceId ? [...room.members.values()].find((item) => item.deviceId === deviceId) : undefined
+      if (!member) {
+        member = {
+          id: shortId('g'),
+          name: String(body.name || 'guest').slice(0, 40),
+          machine: String(body.machine || '').slice(0, 60),
+          deviceId,
+          online: true,
+          self: false,
+          updatedAt: now(),
+          sessions: [],
+        }
+        room.members.set(member.id, member)
+      } else {
+        if (body.name) member.name = String(body.name).slice(0, 40)
+        if (body.machine) member.machine = String(body.machine).slice(0, 60)
+        member.online = true
+        member.updatedAt = now()
       }
-      room.members.set(memberId, member)
-      room.tokens.set(token, memberId)
+      const token = randomBytes(16).toString('hex')
+      room.tokens.set(token, member.id)
       room.updatedAt = now()
       json(res, 200, {
         token,

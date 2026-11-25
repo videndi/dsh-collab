@@ -286,12 +286,21 @@ export function apply(ctx) {
     // 问答分离：默认不把模型的输出片段发给房间，只共享「做了什么 + 交付了什么」
     shareTranscript: persisted.shareTranscript === true,
     mode: 'offline', // offline | host | guest
-    self: { id: shortId('u'), name: defaultName(), machine: hostname() },
+    self: {
+      id: shortId('u'),
+      name: defaultName(),
+      machine: hostname(),
+      // 这台机器/这份 DSH 的稳定身份：加入同一房间时不会重复出现
+      installId: typeof persisted.installId === 'string' && persisted.installId ? persisted.installId : randomBytes(12).toString('hex'),
+    },
     room: null,
     relayUrl: null,
     token: null,
     remoteSnap: null,
   }
+
+  // 第一次运行把安装标识写进设置，之后每次加入房间都用它作为稳定身份
+  if (!persisted.installId) saveSettings({ installId: state.self.installId })
 
   const localSessions = new Map()
   const relayMembers = new Map()
@@ -1006,25 +1015,33 @@ export function apply(ctx) {
     if (state.mode !== 'host' || !state.room) return { status: 409, value: { error: 'no room on this host' } }
     const code = String(body.code || '').trim().toUpperCase()
     if (code !== state.room.code) return { status: 403, value: { error: 'wrong invite code' } }
-    const memberId = shortId('g')
-    const token = randomBytes(16).toString('hex')
-    const member = {
-      id: memberId,
-      name: String(body.name || 'guest').slice(0, 40),
-      machine: String(body.machine || '').slice(0, 60),
-      online: true,
-      self: false,
-      updatedAt: now(),
-      sessions: [],
+    const deviceId = String(body.deviceId || '').slice(0, 64)
+    let member = deviceId ? [...relayMembers.values()].find((item) => item.deviceId === deviceId) : undefined
+    if (!member) {
+      member = {
+        id: shortId('g'),
+        name: String(body.name || 'guest').slice(0, 40),
+        machine: String(body.machine || '').slice(0, 60),
+        deviceId,
+        online: true,
+        self: false,
+        updatedAt: now(),
+        sessions: [],
+      }
+      relayMembers.set(member.id, member)
+    } else {
+      if (body.name) member.name = String(body.name).slice(0, 40)
+      member.online = true
+      member.updatedAt = now()
     }
-    relayMembers.set(memberId, member)
-    relayTokens.set(token, memberId)
+    const token = randomBytes(16).toString('hex')
+    relayTokens.set(token, member.id)
     bump()
     return {
       status: 200,
       value: {
         token,
-        self: { id: memberId, name: member.name },
+        self: { id: member.id, name: member.name },
         room: { id: state.room.id, code: state.room.code },
         messages: trimmedMessages(),
       },
@@ -1400,7 +1417,13 @@ export function apply(ctx) {
         const response = await fetch(`${relay}/join`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ code, name: state.self.name, machine: hostname(), create: body.create !== false }),
+          body: JSON.stringify({
+            code,
+            name: state.self.name,
+            machine: hostname(),
+            deviceId: state.self.installId,
+            create: body.create !== false,
+          }),
         })
         const payload = await response.json().catch(() => ({}))
         if (!response.ok) {
