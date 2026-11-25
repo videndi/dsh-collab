@@ -113,6 +113,7 @@ async function main() {
           {
             id: 'a-s1',
             label: 'alpha',
+            preset: 'collab',
             status: 'running',
             tool: 'grep',
             note: '在查入口',
@@ -148,6 +149,22 @@ async function main() {
       assert(body.status === 200, `artifact ${body.status}`)
       assert(String(body.body.text).includes('拆接口'), '正文不对')
       return `${String(body.body.text).length} 字节`
+    })
+
+    await step('客厅隔离：非协作模式会话被中继丢弃', async () => {
+      await post('/dsh-collab/relay/report', {
+        token: tokenA,
+        sessions: [
+          { id: 'a-s1', label: 'alpha', preset: 'collab', status: 'running', tool: 'grep', turn: 2, tokensIn: 900, tokensOut: 120, at: Date.now() },
+          { id: 'a-standard', label: 'private-work', preset: 'standard', status: 'running', tool: 'bash', turn: 9, tokensIn: 9999, tokensOut: 9999, at: Date.now() },
+        ],
+      })
+      const snap = await json(`/dsh-collab/relay/snapshot?token=${tokenB}`)
+      const a = snap.body.members.find((m) => m.name === '成员A')
+      const ids = (a.sessions || []).map((x) => x.id)
+      assert(ids.includes('a-s1'), '协作会话丢了')
+      assert(!ids.includes('a-standard'), '标准模式会话竟然进了客厅')
+      return `客厅只有 ${ids.join(',')}`
     })
 
     await step('消息双向', async () => {

@@ -201,7 +201,16 @@ async function readJson(req, limit = 2_000_000) {
   return text.trim() ? JSON.parse(text) : {}
 }
 
+const ALLOW_ALL_PRESETS = process.env.RELAY_ALLOW_ALL_PRESETS === '1'
+
+/**
+ * 客厅只收「协作模式」会话：普通会话（标准/创造等）一进不了客厅，
+ * 所以谁在别的模式下干活，进度和资料都不会被共享 —— 还没升级插件的队友也一样。
+ */
 function sanitizeSession(item) {
+  if (!item) return null
+  const preset = String(item.preset || '').toLowerCase()
+  if (!ALLOW_ALL_PRESETS && preset !== 'collab') return null
   return {
     id: String(item.id || ''),
     label: String(item.label || '').slice(0, 48),
@@ -368,7 +377,10 @@ function handleRelay(sub, req, res) {
         return
       }
       const sessions = Array.isArray(body.sessions) ? body.sessions : []
-      found.member.sessions = sessions.slice(0, MAX_SESSIONS).map(sanitizeSession)
+      found.member.sessions = sessions
+        .slice(0, MAX_SESSIONS)
+        .map(sanitizeSession)
+        .filter(Boolean)
       found.member.updatedAt = now()
       found.member.online = true
       if (body.name) found.member.name = String(body.name).slice(0, 40)

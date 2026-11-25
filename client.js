@@ -38,7 +38,7 @@ window.__ModuleLoader__.load({
       running: '研究中',
       idle: '空闲',
       tokens: 'token',
-      noSession: '暂无进行的会话',
+      noSession: '还没开协作模式会话（标准模式的会话不会出现在客厅）',
       scanHint: '手机扫码，或把链接发给朋友（他在自己的 DSH 里打开会自动带出邀请码）。',
       loopbackBlocked:
         '注意：你的 DSH 现在只监听 127.0.0.1，任何人（同局域网 / Tailscale 上的队友）都连不进来。先做一次入口：tailscale serve --bg <端口>（或 funnel），把得到的 https 地址填进「固定地址」并保存；也可以用独立 relay（scripts/relay-server.mjs）并把它的地址填进去。',
@@ -65,11 +65,16 @@ window.__ModuleLoader__.load({
       roomJoin: '进入客厅',
       advanced: '高级：手工填 relay / 粘贴邀请链接 / 二维码文本',
       livingRoom: '客厅（共享：成员 · 进度 · 资料 · 消息）',
+      sharedHint: '✓ 当前会话是「协作模式」，正在客厅共享',
+      notSharedHint: '当前会话不在协作模式：它的内容和进度只在本机，不会进客厅。要一起干活就新建一个协作模式会话。',
+      newCollabSession: '新建协作会话（协作模式）',
+      newCollabFail: '这个版本没有一键新建会话的接口，请手动新建会话并在模式里选「协作模式」',
       myDesk: '我的工作区（私有：这里的问答只在我这台机器上）',
       shareTranscriptOff: '问答分离中：只共享「做了什么」和交付的文件',
       shareTranscriptOn: '正在共享我的输出片段（会显示给房间成员）',
       shareTranscriptToggle: '共享输出片段',
       stepCreate: '第 1 步 · 创建协作室（或用房间号进入别人的）',
+      collabOnlyNote: '客厅只收「协作模式」的会话：普通会话的内容与进度只留在本机。',
       createHint: '创建后会立刻生成：二维码 + 邀请链接 + 6 位随机邀请码，都在下面这个面板里。',
       inviteStep: '第 2 步 · 把这个发给朋友（扫二维码 / 发链接 / 发邀请码都行）',
       relayInviteHint: '这个二维码指向中继的加入说明页：朋友扫码或点链接就知道该往自己的 DSH 里填什么。',
@@ -390,7 +395,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function CollabPanel() {
+    function CollabPanel(props) {
       const [snap, setSnap] = React.useState(null)
       const [expanded, setExpanded] = React.useState(false)
       const [name, setName] = React.useState('')
@@ -493,6 +498,12 @@ window.__ModuleLoader__.load({
       const messages = (snap && snap.messages) || []
       const lab = (snap && snap.lab) || { running: false, members: [] }
       const tunnelInfo = (snap && snap.tunnel) || null
+
+      // 当前会话是否在客厅里共享（只有协作模式的会话会出现在 members[自己].sessions）
+      const selfMember = members.find((m) => m.self)
+      const sharedIds = new Set(((selfMember && selfMember.sessions) || []).map((item) => item.id))
+      const currentSessionId = props && props.sessionId ? String(props.sessionId) : ''
+      const isShared = currentSessionId ? sharedIds.has(currentSessionId) : null
 
       const openArtifact = async (member, session, artifact) => {
         setPreview({ loading: true, title: artifact.title, path: artifact.path, text: '', note: artifact.note })
@@ -651,6 +662,7 @@ window.__ModuleLoader__.load({
                         )
                       : null,
                     h('div', { style: { ...S.label, marginTop: 4 } }, TEXT.advanced),
+                    h('div', { style: S.label }, TEXT.collabOnlyNote),
                     h('div', { style: S.step }, TEXT.stepCreate),
                     h(
                       'div',
@@ -866,6 +878,23 @@ window.__ModuleLoader__.load({
                         h('button', { type: 'button', style: S.btn, disabled: busy, onClick: () => call('/leave') }, TEXT.leave),
                       ),
                     ),
+
+                    active && currentSessionId
+                      ? h(
+                          'div',
+                          { style: S.row, gap: 8 },
+                          h('div', { style: isShared === false ? S.warn : S.label },
+                            isShared === false ? TEXT.notSharedHint : TEXT.sharedHint),
+                          h('button', {
+                            type: 'button',
+                            style: { ...S.badge, cursor: 'pointer', background: 'transparent' },
+                            onClick: () => {
+                              const ok = props && typeof props.startCollab === 'function' ? props.startCollab() : false
+                              if (!ok) setError(TEXT.newCollabFail)
+                            },
+                          }, TEXT.newCollabSession),
+                        )
+                      : null,
                     invite ? h('div', { style: S.step }, TEXT.inviteStep) : null,
                     invite
                       ? h(
@@ -1128,8 +1157,19 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
+        const startCollab = () => {
+          try {
+            const service = (ctx.get && ctx.get('uiWorkspace')) || ctx.uiWorkspace
+            if (!service || typeof service.startSession !== 'function') return false
+            service.startSession(undefined, { agentPreset: 'collab' })
+            return true
+          } catch {
+            return false
+          }
+        }
+        const PanelWithActions = (props) => h(CollabPanel, { ...props, startCollab })
         const dispose = ctx.slots.inject('conversation.composer.dock', () =>
-          ctx.slots.register({ name: 'conversation.composer.dock', id: 'dsh-collab', order: 20 }, CollabPanel),
+          ctx.slots.register({ name: 'conversation.composer.dock', id: 'dsh-collab', order: 20 }, PanelWithActions),
         )
         return () => {
           if (typeof dispose === 'function') dispose()

@@ -294,6 +294,8 @@ export function apply(ctx) {
         : DEFAULT_HOME_RELAY,
     // 问答分离：默认不把模型的输出片段发给房间，只共享「做了什么 + 交付了什么」
     shareTranscript: persisted.shareTranscript === true,
+    // 客厅隔离：只共享「协作模式」会话（settings 里可放开，默认关闭）
+    shareAllSessions: persisted.shareAllSessions === true,
     mode: 'offline', // offline | host | guest
     self: {
       id: shortId('u'),
@@ -705,6 +707,8 @@ export function apply(ctx) {
   function localSessionViews() {
     return [...localSessions.values()]
       .filter((rec) => now() - rec.at < IDLE_HIDE_MS)
+      // 只有协作模式的会话才进客厅；标准/创造模式的会话只留在本地
+      .filter((rec) => state.shareAllSessions || String(rec.preset || '').toLowerCase() === 'collab')
       .sort((a, b) => b.at - a.at)
       .slice(0, MAX_SESSIONS)
       .map((rec) => ({
@@ -845,6 +849,7 @@ export function apply(ctx) {
       publicBaseUrl: state.publicBaseUrl || '',
       homeRelay: state.homeRelay || '',
       shareTranscript: !!state.shareTranscript,
+      shareAllSessions: !!state.shareAllSessions,
       settingsFile: settingsFile(),
       selfName: state.self.name,
     }
@@ -1516,6 +1521,10 @@ export function apply(ctx) {
       if (typeof body.shareTranscript === 'boolean') {
         patch.shareTranscript = body.shareTranscript
         state.shareTranscript = body.shareTranscript
+      }
+      if (typeof body.shareAllSessions === 'boolean') {
+        patch.shareAllSessions = body.shareAllSessions
+        state.shareAllSessions = body.shareAllSessions
       }
       if (typeof body.name === 'string' && body.name.trim()) {
         patch.name = body.name.trim().slice(0, 40)
