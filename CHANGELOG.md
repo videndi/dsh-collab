@@ -1,3 +1,9 @@
+# 0.5.6
+
+- **修**：加入时如果只拿到邀请码、没拿到 relay，插件会悄悄退回用「你自己的 DSH 地址」，然后报一个看不懂的 fetch failed。
+  现在：粘贴看板链接 / 落地页链接 / relay 根地址都能推导出 relay；缺 relay 时直接提示要填什么。
+- 加入失败的错误里带上目标地址与底层原因（ENOTFOUND / ECONNREFUSED / 证书等）。
+
 # 0.5.5
 
 - **只读看板**：独立 relay 新增 `GET /dsh-collab/watch?c=<邀请码>` 页面与 `GET /relay/board?code=` 数据端点。

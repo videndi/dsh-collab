@@ -1407,7 +1407,11 @@ export function apply(ctx) {
         void guestReport()
         sendJson(res, 200, snapshot())
       } catch (error) {
-        sendJson(res, 502, { error: `无法连接协作室：${error && error.message ? error.message : String(error)}` })
+        const cause = error && error.cause ? error.cause.code || error.cause.message || '' : ''
+        const detail = error && error.message ? error.message : String(error)
+        sendJson(res, 502, {
+          error: `连不上 ${relay}${cause ? '（' + cause + '）' : ''}：${detail}。请确认这个地址在浏览器里能打开 /dsh-collab/relay/health`,
+        })
       }
       return
     }

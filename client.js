@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
       joinTitle: '加入别人的协作室',
       joinHint: '把邀请链接 / 二维码文本粘到下面，或手工填 relay 与邀请码。',
       paste: '粘贴邀请链接或二维码文本',
-      relay: 'Relay 地址',
+      relay: 'Relay 地址（必填，形如 https://域名/dsh-collab/relay）',
       code: '邀请码',
       join: '加入',
       leave: '离开',
@@ -100,7 +100,17 @@ window.__ModuleLoader__.load({
         const url = new URL(raw)
         const code = url.searchParams.get('collab') || url.searchParams.get('code') || url.searchParams.get('c')
         const relay = url.searchParams.get('relay') || url.searchParams.get('r')
-        if (code) return { code: String(code).toUpperCase(), relay: relay ? String(relay) : undefined }
+        if (code) {
+          // 看板页 /dsh-collab/watch?c=CODE、落地页 /dsh-collab/join?c=CODE，
+          // 以及 relay 的根地址，都能从 URL 本身推出 relay 该填什么。
+          const derived =
+            relay ||
+            (/^\/dsh-collab\//.test(url.pathname) || url.pathname === '/' ? url.origin + '/dsh-collab/relay' : undefined)
+          return { code: String(code).toUpperCase(), relay: derived }
+        }
+        if (/^\/dsh-collab\/relay\/?$/.test(url.pathname)) {
+          return { code: undefined, relay: url.origin + '/dsh-collab/relay' }
+        }
       } catch {
         /* 不是 URL，继续按文本解析 */
       }
@@ -519,11 +529,15 @@ window.__ModuleLoader__.load({
       const doJoin = async () => {
         const parsedCode = (code || '').trim().toUpperCase() || (parseInvite(paste) || {}).code
         const parsedRelay = (relay || '').trim() || (parseInvite(paste) || {}).relay
-        const finalRelay = parsedRelay || window.location.origin + '/dsh-collab/relay'
         if (!parsedCode) {
-          setError('还需要邀请码')
+          setError('还需要邀请码（房主给的 6 位码）')
           return
         }
+        if (!parsedRelay) {
+          setError('还需要 Relay 地址：把房主给的邀请链接整段粘到上面的框，或手填 https://<房主的域名>/dsh-collab/relay')
+          return
+        }
+        const finalRelay = String(parsedRelay).trim().replace(/\/+$/, '')
         const ok = await call('/join', { relay: finalRelay, code: parsedCode, name })
         if (ok) {
           setNotice('')
