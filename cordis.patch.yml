@@ -5,7 +5,7 @@
 #    人设里加上多人协作的汇报约定。
 - insert:
     - id: collab-host
-      name: '@local/dsh-collab'
+      name: 'dsh-collab'
 
     - id: preset-collab
       name: '@deepseek-ai/dsh-agent-preset'
@@ -29,7 +29,7 @@
                 - 其他成员可能正在做别的分支：先看已落盘的结论与产物，不要重复劳动；
                   结论冲突时以磁盘上的文件为准，并说明你据什么覆盖它。
                 - 需要房间里的其他人配合时，直接说明「请谁做什么」，不要假装多人已经同步。
-                - 协作面板由插件 `@local/dsh-collab` 提供，固定在输入框下方；用户在那里
+                - 协作面板由插件 `dsh-collab` 提供，固定在输入框下方；用户在那里
                   创建或加入协作室。你不需要也不要去动它。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
