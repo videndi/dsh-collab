@@ -1730,6 +1730,20 @@ export function apply(ctx) {
       sendJson(res, 200, { ok: true, ...result, snapshot: snapshot() })
       return
     }
+    if (sub === '/api/rooms') {
+      const relay = String(body.relay || state.homeRelay || '').trim()
+      if (!relay) {
+        sendJson(res, 400, { error: '还没有中继地址' })
+        return
+      }
+      try {
+        const listed = await relayGet(relay, '/rooms')
+        sendJson(res, listed.ok ? 200 : 502, listed.ok ? { relay, rooms: (listed.payload && listed.payload.rooms) || [] } : { error: '中继没有回应' })
+      } catch (error) {
+        sendJson(res, 502, { error: String(error && error.message ? error.message : error) })
+      }
+      return
+    }
     if (sub === '/api/session/room') {
       const sessionId = String(body.sessionId || '')
       if (!sessionId) {

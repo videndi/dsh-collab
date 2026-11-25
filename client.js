@@ -64,6 +64,10 @@ window.__ModuleLoader__.load({
       roomFound: '找到房间',
       roomJoin: '进入客厅',
       openForSession: '为这个会话开协作室',
+      listRooms: '看看有哪些房间',
+      roomsEmpty: '中继上还没有别的房间',
+      roomsHint: '点房间后面的「加入」就能进同一间房（这个会话会切过去）',
+      joinThisRoom: '加入',
       roomOpened: '这个会话的协作室已建好，把房间号发给队友',
       joinedRoom: '已加入，这个会话现在和队友共享',
       sessionRoomOnly: '这个会话是「协作模式」：它有自己的房间，和别的会话互不影响。',
@@ -418,6 +422,7 @@ window.__ModuleLoader__.load({
       const [roomCode, setRoomCode] = React.useState('')
       const [found, setFound] = React.useState(null)
       const [shareOut, setShareOut] = React.useState(false)
+      const [roomList, setRoomList] = React.useState(null)
       const mounted = React.useRef(true)
       const prefilled = React.useRef(false)
 
@@ -695,6 +700,47 @@ window.__ModuleLoader__.load({
                       : null,
                     h('div', { style: { ...S.label, marginTop: 4 } }, TEXT.advanced),
                     h('div', { style: S.label }, TEXT.collabOnlyNote),
+
+                    h('div', { style: { ...S.row, gap: 6 } },
+                      h('button', {
+                        type: 'button',
+                        style: S.btn,
+                        disabled: busy,
+                        onClick: async () => {
+                          const result = await call('/rooms', {})
+                          if (result && result.rooms) setRoomList(result.rooms)
+                        },
+                      }, TEXT.listRooms),
+                      roomList ? h('span', { style: S.label }, TEXT.roomsHint) : null,
+                    ),
+                    roomList
+                      ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                          roomList.length === 0
+                            ? h('div', { style: S.label }, TEXT.roomsEmpty)
+                            : roomList.map((room) =>
+                                h('div', { key: room.code, style: S.board },
+                                  h('div', { style: S.session },
+                                    h('span', { style: { fontFamily: 'ui-monospace,monospace', fontSize: 12, color: 'var(--dsw-alias-brand-primary, #4c8dff)' } }, room.code),
+                                    h('span', { style: { ...S.ellipsis, flex: 1, minWidth: 0 } }, (room.host || '-') + ' · ' + (room.members || 0) + ' 人在客厅'),
+                                    h('button', {
+                                      type: 'button',
+                                      style: { ...S.badge, cursor: 'pointer', background: 'transparent' },
+                                      disabled: busy,
+                                      onClick: async () => {
+                                        const joined = sessionMode
+                                          ? await call('/session/join', { sessionId: String(props.sessionId || ''), code: room.code })
+                                          : await call('/join', { code: room.code })
+                                        if (joined) {
+                                          setRoomList(null)
+                                          setNotice(TEXT.joinedRoom || '已加入')
+                                        }
+                                      },
+                                    }, TEXT.joinThisRoom),
+                                  ),
+                                ),
+                              ),
+                        )
+                      : null,
                     h('div', { style: S.step }, TEXT.stepCreate),
                     h(
                       'div',

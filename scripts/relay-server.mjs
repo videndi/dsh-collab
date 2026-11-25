@@ -209,8 +209,10 @@ const ALLOW_ALL_PRESETS = process.env.RELAY_ALLOW_ALL_PRESETS === '1'
  */
 function sanitizeSession(item) {
   if (!item) return null
+  // 这里不再按 preset 丢弃会话：房间隔离交给插件端（新版只上报"这个会话绑定的那个会话"）。
+  // 旧版插件没有 preset 字段、或带 standard，也必须能进客厅，否则老用户会"进不去"。
   const preset = String(item.preset || '').toLowerCase()
-  if (!ALLOW_ALL_PRESETS && preset !== 'collab') return null
+  void preset
   return {
     id: String(item.id || ''),
     label: String(item.label || '').slice(0, 48),

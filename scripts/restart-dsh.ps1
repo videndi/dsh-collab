@@ -1,30 +1,34 @@
-# restart-dsh.ps1 — 让 DSH 自己重启一次（独立进程运行，脱离 DSH 的进程树）。
-# 先尝试优雅关闭（让会话落盘），不行再强制结束，然后重新拉起。
-param([int]$DelaySeconds = 120)
+# restart-dsh.ps1 — 重启 DSH 并写日志到 restart.log（便于确认到底有没有执行）。
+param([int]$DelaySeconds = 45)
 
-$ErrorActionPreference = 'SilentlyContinue'
+$log = 'D:\dsh\collab-plugin\restart.log'
+function L($m) {
+  try { Add-Content -Path $log -Value ((Get-Date -Format 'HH:mm:ss') + ' ' + $m) } catch { }
+}
 
+L "scheduled (delay=${DelaySeconds}s)"
 Start-Sleep -Seconds $DelaySeconds
+L 'wake up'
 
 $exe = 'D:\Users\yunan\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe'
 $name = 'DeepSeek Harness'
 
-# 清掉计划任务残留（如曾用 schtasks 创建过）
-schtasks /delete /tn 'dsh-collab-restart' /f | Out-Null
+$main = Get-Process -Name $name -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }
+L ("main windows=" + (@($main).Count))
+foreach ($p in @($main)) { try { $p.CloseMainWindow() | Out-Null } catch { } }
 
-# 1) 优雅关闭主窗口
-$main = Get-Process -Name $name | Where-Object { $_.MainWindowHandle -ne 0 }
-foreach ($proc in $main) { $proc.CloseMainWindow() | Out-Null }
 Start-Sleep -Seconds 8
-
-# 2) 还有残留就强杀
-$left = Get-Process -Name $name
-if ($left) {
-  foreach ($proc in $left) { Stop-Process -Id $proc.Id -Force }
+$left = @(Get-Process -Name $name -ErrorAction SilentlyContinue)
+L ("processes left=" + $left.Count)
+if ($left.Count -gt 0) {
+  foreach ($p in $left) { try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch { } }
   Start-Sleep -Seconds 3
 }
 
-# 3) 重新启动
 if (Test-Path $exe) {
+  L "starting $exe"
   Start-Process -FilePath $exe
+  L 'started'
+} else {
+  L "EXE NOT FOUND: $exe"
 }
