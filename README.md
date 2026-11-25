@@ -1,5 +1,7 @@
 # dsh-collab — DSH 多人协作研究室
 
+中文 | [English](README.en.md)
+
 > 给 [DeepSeek Harness](https://github.com/deepseek-ai) 加一个**协作模式**：把朋友邀请进你的项目，
 > 每个人在自己的机器、自己的账号、自己的 token 上跑研究，所有人的会话进度、当前工具调用、
 > token 用量和协作消息实时汇总到同一块面板。

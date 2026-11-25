@@ -12,7 +12,9 @@
 import { encodeMatrix } from '../qr.js'
 import { assertRoundTrip } from './qr-decode.mjs'
 
-const BASE = (process.argv[2] || process.env.DSH_COLLAB_BASE || 'http://127.0.0.1:53796').replace(/\/+$/, '')
+const args = process.argv.slice(2)
+const QR_ONLY = args.includes('--qr-only')
+const BASE = (args.find((a) => !a.startsWith('--')) || process.env.DSH_COLLAB_BASE || 'http://127.0.0.1:53796').replace(/\/+$/, '')
 const results = []
 
 async function step(name, fn, options = {}) {
@@ -67,6 +69,13 @@ async function main() {
     assertRoundTrip(encodeMatrix, sample, 'Q')
     return `${new TextEncoder().encode(sample).length} 字节`
   })
+
+  if (QR_ONLY) {
+    const qrFailed = results.filter((r) => !r.ok && !r.optional)
+    console.log(`\n--qr-only：跳过对运行中 DSH 的检查；离线部分 ${results.length - qrFailed.length}/${results.length} 通过`)
+    if (qrFailed.length) process.exitCode = 1
+    return
+  }
 
   console.log(`\n== 2. 运行中的 DSH（${BASE}） ==`)
   let needsRestart = false

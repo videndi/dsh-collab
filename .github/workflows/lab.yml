@@ -1,0 +1,34 @@
+name: lab
+
+# 只跑「不需要 DSH、不需要外网」的自检：
+#   · scripts/lab.mjs —— 假 Cordis 上下文 + 真实 http，房主/成员两个实例在本机回环互通
+#   · 二维码编解码往返（含在 lab 里）
+# 公网隧道那部分在 scripts/tunnel-check.mjs，需要出网，CI 不跑。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lab:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: syntax
+        run: |
+          node --check index.js
+          node --check client.js
+          node --check qr.js
+      - name: lab (offline, loopback only)
+        run: node scripts/lab.mjs
+      - name: qr round-trip only
+        run: node scripts/selftest.mjs --qr-only
