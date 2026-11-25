@@ -10,7 +10,11 @@ set -euo pipefail
 
 PORT=8790
 FROM_ZIP=""
-REPO_RAW="https://raw.githubusercontent.com/videndi/dsh-collab/main/scripts"
+# 下载源：国内优先 jsDelivr，其次 GitHub raw（后者在部分网络不可达）
+REPO_SOURCES=(
+  "https://cdn.jsdelivr.net/gh/videndi/dsh-collab@main/scripts"
+  "https://raw.githubusercontent.com/videndi/dsh-collab/main/scripts"
+)
 DEST="/opt/dsh-collab-relay"
 DATA="/var/lib/dsh-collab"
 
@@ -52,15 +56,24 @@ if [ -n "$FROM_ZIP" ]; then
   rm -rf "$TMP"
   echo "    来自本地包 $FROM_ZIP"
 else
-  for f in relay-server.mjs watch-page.mjs status-page.mjs; do
-    curl -fsSL "$REPO_RAW/$f" -o "$DEST/scripts/$f" || {
-      echo "    从 GitHub 下载 $f 失败。"
-      echo "    换成离线方式：把 dsh-collab-relay-*.zip 上传到这机器，再执行"
-      echo "      bash $0 --from-zip /root/dsh-collab-relay.zip"
-      exit 1
-    }
+  ok=0
+  for base in "${REPO_SOURCES[@]}"; do
+    fail=0
+    for f in relay-server.mjs watch-page.mjs status-page.mjs; do
+      curl -fsSL "$base/$f" -o "$DEST/scripts/$f" || { fail=1; break; }
+    done
+    if [ "$fail" -eq 0 ]; then
+      echo "    来自 $base"
+      ok=1
+      break
+    fi
   done
-  echo "    来自 GitHub"
+  if [ "$ok" -ne 1 ]; then
+    echo "    两个下载源都不通。"
+    echo "    换成离线方式：把 dsh-collab-relay-*.zip 上传到这机器，再执行"
+    echo "      bash $0 --from-zip /root/dsh-collab-relay.zip"
+    exit 1
+  fi
 fi
 
 echo "==> 4/6 服务用户与权限"

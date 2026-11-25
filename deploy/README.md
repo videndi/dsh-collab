@@ -5,7 +5,8 @@
 买一台最便宜的 1 核 1G 云服务器（Ubuntu 22.04/24.04），SSH 上去执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/videndi/dsh-collab/main/deploy/install-relay.sh -o install-relay.sh
+# 国内网络推荐走 jsDelivr（raw.githubusercontent.com 经常连不上）
+curl -fsSL https://cdn.jsdelivr.net/gh/videndi/dsh-collab@main/deploy/install-relay.sh -o install-relay.sh
 sudo bash install-relay.sh
 ```
 
