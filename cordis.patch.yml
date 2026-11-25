@@ -1,0 +1,145 @@
+# dsh-collab bundle patch
+#
+# 1) Host 行：协作 relay + 会话进度桥，挂到既有 webServer 的 /dsh-collab 上。
+# 2) preset-collab：新建会话里出现的「协作模式」，工具面与创造模式一致，
+#    人设里加上多人协作的汇报约定。
+- insert:
+    - id: collab-host
+      name: '@local/dsh-collab'
+
+    - id: preset-collab
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: collab
+        name: 协作模式
+        description: "多人协作研究室：邀请链接或二维码拉朋友进同一协作室，各自用自己的 token 跑研究，实时同步每个人的会话进度、当前工具与 token 用量；自带不依赖外网的本机实验台。工具面等同创造模式。"
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你在「协作模式」里工作：这是一个多人协作研究室，房间里可能同时有几个人在
+                各自的机器上、用各自的 token 做研究。
+
+                - 你的输出要能被房间里其他人读懂：关键阶段写清「正在做什么 / 已经得到什么 /
+                  下一步做什么」，不要只在最后给一个结论。
+                - 进度摘要用短句（阶段 → 结论 → 产物路径）。协作面板只显示短摘要，长内容
+                  落成文件并写清绝对路径，让其他成员能直接读。
+                - 其他成员可能正在做别的分支：先看已落盘的结论与产物，不要重复劳动；
+                  结论冲突时以磁盘上的文件为准，并说明你据什么覆盖它。
+                - 需要房间里的其他人配合时，直接说明「请谁做什么」，不要假装多人已经同步。
+                - 协作面板由插件 `@local/dsh-collab` 提供，固定在输入框下方；用户在那里
+                  创建或加入协作室。你不需要也不要去动它。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it.
+
+                    Explore first with non-mutating reads, searches and analysis. Prefer existing functions and patterns over new machinery.
+
+                    Make the plan decision-complete: goal and success criteria, changes grouped by subsystem, public API and data-flow changes, edge cases and failure modes, tests and acceptance criteria, explicit assumptions. Keep it short enough to review.
+
+                    When ready, call exit_plan_mode with the complete plan markdown starting with a # title, as the only and final tool call of that response. Do not paste the plan as plain prose.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-cordis
+            name: '@deepseek-ai/dsh-tool-cordis'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: !!js "!ctx.get('profileContext')"
+          - id: tool-plugin-market
+            name: '@deepseek-ai/dsh-plugin-market/tools'
+            disabled: !!js "!ctx.get('profileContext')"

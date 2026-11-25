@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Collaboration Room",
+    "description": "Adds a Collaboration preset to new sessions: create a room, invite teammates with a link or QR code, and watch every member live session progress, tool activity and token usage, each on their own account. Ships an offline on-machine lab."
+  }
+}
