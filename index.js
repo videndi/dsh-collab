@@ -467,7 +467,27 @@ export function apply(ctx) {
   }
 
   async function reportBinding(sessionId, binding) {
-    if (!binding || !binding.token) return
+    if (!binding) return
+    // 重启后 token 会丢（restoreBindings 只恢复 code/relay）：先用房间号重新加入，
+    // 拿到 token 再上报。否则这个绑定会永远静默、面板一直显示「0 人」。
+    if (!binding.token) {
+      try {
+        const joined = await relayPost(binding.relay, '/join', {
+          code: binding.code,
+          name: state.self.name,
+          machine: hostname(),
+          deviceId: state.self.installId,
+          create: true,
+        })
+        if (joined.ok && joined.payload && joined.payload.token) {
+          binding.token = joined.payload.token
+        } else {
+          return
+        }
+      } catch {
+        return
+      }
+    }
     // 会话可能还没有任何事件（比如刚重启后没打开过它）：仍然要上报一个最小视图，
     // 否则这个绑定会一直静默，面板里就永远显示"0 人"。
     const view = sessionViewOf(sessionId) || {
