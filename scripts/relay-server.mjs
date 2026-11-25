@@ -19,6 +19,7 @@
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { hostname } from 'node:os'
+import { watchHtml } from './watch-page.mjs'
 
 const args = process.argv.slice(2)
 const argOf = (name, fallback) => {
@@ -314,6 +315,44 @@ function handleRelay(sub, req, res) {
       json(res, 200, { ok: true })
     })
   }
+  if (sub === '/relay/board' && req.method === 'GET') {
+    const url = new URL(req.url || '/', 'http://localhost')
+    const code = (url.searchParams.get('code') || url.searchParams.get('c') || '').toUpperCase()
+    const room = rooms.get(code)
+    if (!room) {
+      json(res, 404, { error: 'room not found' })
+      return
+    }
+    const members = [...room.members.values()].map((member) => ({
+      id: member.id,
+      name: member.name,
+      machine: member.machine,
+      online: now() - member.updatedAt < MEMBER_STALE_MS,
+      updatedAt: member.updatedAt,
+      sessions: (member.sessions || []).map((session) => ({
+        id: session.id,
+        label: session.label,
+        status: session.status,
+        tool: session.tool,
+        note: session.note,
+        turn: session.turn,
+        tokensIn: session.tokensIn,
+        tokensOut: session.tokensOut,
+        at: session.at,
+        timeline: session.timeline,
+        artifacts: session.artifacts,
+      })),
+    }))
+    json(res, 200, {
+      code: room.code,
+      host: room.host,
+      relay: relayUrlFor(req),
+      members,
+      messages: room.messages.slice(-100),
+      updatedAt: room.updatedAt,
+    })
+    return
+  }
   if (sub === '/relay/snapshot' && req.method === 'GET') {
     const url = new URL(req.url || '/', 'http://localhost')
     const found = memberFor(url.searchParams.get('token') || '')
@@ -365,6 +404,11 @@ const server = createServer((req, res) => {
   const sub = url.pathname.startsWith(BASE) ? url.pathname.slice(BASE.length) : null
   Promise.resolve()
     .then(() => {
+      if (sub === '/watch' || sub === '/watch/') {
+        const code = (url.searchParams.get('c') || url.searchParams.get('code') || '').toUpperCase()
+        html(res, 200, watchHtml(code))
+        return
+      }
       if (sub === '/join' || sub === '/join/') {
         const code = (url.searchParams.get('c') || url.searchParams.get('code') || '').toUpperCase()
         html(res, 200, joinPage(code, relayUrlFor(req)))

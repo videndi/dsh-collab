@@ -1093,6 +1093,33 @@ export function apply(ctx) {
 
   // ── guest：上报与拉取 ────────────────────────────────────────────────
 
+  // 中继重启 / 掉线后：token 失效或网络断开时自动重新加入同一个房间。
+  let rejoinAt = 0
+  let rejoining = false
+  async function tryRejoin() {
+    if (state.mode !== 'guest' || !state.relayUrl || !state.room) return
+    if (rejoining || now() - rejoinAt < 5000) return
+    rejoinAt = now()
+    rejoining = true
+    try {
+      const response = await fetch(`${originOf()}${BASE}/api/join` , {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ relay: state.relayUrl, code: state.room.code, name: state.self.name }),
+      })
+      if (!response.ok) return
+      const payload = await response.json().catch(() => null)
+      if (payload && payload.mode === 'guest') {
+        console.log('[dsh-collab] 已重新加入协作室', state.room.code)
+        bump()
+      }
+    } catch {
+      /* 下一轮再试 */
+    } finally {
+      rejoining = false
+    }
+  }
+
   async function guestReport() {
     if (state.mode !== 'guest' || !state.relayUrl || !state.token) return
     const base = state.relayUrl.replace(/\/+$/, '')
@@ -1107,7 +1134,10 @@ export function apply(ctx) {
           artifactBodies: localArtifactBodies(),
         }),
       })
-      if (!response.ok) return
+      if (!response.ok) {
+        if (response.status === 403 || response.status === 404) void tryRejoin()
+        return
+      }
       await response.json()
       const snapResponse = await fetch(`${base}/snapshot?token=${encodeURIComponent(state.token)}`)
       if (snapResponse.ok) {
