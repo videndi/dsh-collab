@@ -359,9 +359,10 @@ export function apply(ctx) {
   const resumeCode = typeof persisted.code === 'string' ? persisted.code : ''
   if (resumeRelay && resumeCode) {
     let attempts = 0
+    // 中继可能比 DSH 晚起来（比如开机顺序）：持续重试一小时，别试几次就放弃。
     const resumeTimer = setInterval(async () => {
       attempts += 1
-      if (attempts > 8) {
+      if (state.mode === 'guest' || attempts > 720) {
         clearInterval(resumeTimer)
         return
       }
@@ -376,9 +377,9 @@ export function apply(ctx) {
           console.log('[dsh-collab] 已自动回到协作室', resumeCode)
         }
       } catch {
-        /* 端口还没起来，等下一轮 */
+        /* 端口或中继还没起来，等下一轮 */
       }
-    }, 1500)
+    }, 5000)
     if (resumeTimer && typeof resumeTimer.unref === 'function') resumeTimer.unref()
   }
 
