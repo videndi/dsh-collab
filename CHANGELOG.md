@@ -1,3 +1,9 @@
+# 0.5.8
+
+- 自检页按网络列出候选 relay 地址：局域网 / Tailscale / 公网隧道，并标注各自适用场景。
+  （应对 trycloudflare 在部分网络被 RST 的情况：换一条能通的即可）
+- relay-server 的候选地址会自动排除 VMware/Npcap 等虚拟网卡。
+
 # 0.5.7
 
 - 新增 `GET /dsh-collab/status` 中继自检页：一条链接里显示 relay 地址、在跑的房间、各房间的看板/加入入口，

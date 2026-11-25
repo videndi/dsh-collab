@@ -18,7 +18,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
-import { hostname } from 'node:os'
+import { hostname, networkInterfaces } from 'node:os'
 import { watchHtml } from './watch-page.mjs'
 import { statusHtml } from './status-page.mjs'
 
@@ -400,13 +400,52 @@ function handleRelay(sub, req, res) {
   json(res, 404, { error: 'unknown relay endpoint' })
 }
 
+
+/** 给自检页用的候选地址：局域网 / Tailscale / 公网隧道都列出来，谁通用谁。 */
+function candidateAddresses(req, port) {
+  const list = []
+  const seen = new Set()
+  const add = (label, ip, note) => {
+    const url = `http://${ip}:${port}${BASE}/relay`
+    if (seen.has(url)) return
+    seen.add(url)
+    list.push({ label, url, note })
+  }
+  const nets = networkInterfaces()
+  for (const [name, infos] of Object.entries(nets)) {
+    for (const info of infos || []) {
+      if (!info || info.family !== 'IPv4' || info.internal) continue
+      if (/^169\.254\./.test(info.address)) continue
+      if (info.address.startsWith('100.')) {
+        add('Tailscale', info.address, '装了 Tailscale 并加入同一 tailnet 就能用这条')
+        continue
+      }
+      if (/VMware|VirtualBox|Npcap|Hyper-V|Loopback|vEthernet/i.test(name)) continue
+      add('局域网', info.address, '同一 WiFi / 同一办公室网络可用这条（最稳）')
+    }
+  }
+  const hostHeader = req && req.headers ? req.headers.host : ''
+  const proto = ((req && req.headers && (req.headers['x-forwarded-proto'] || '')) || '').split(',')[0].trim() || 'http'
+  if (hostHeader && !/^127\.|^localhost/i.test(hostHeader)) {
+    list.unshift({ label: '公网隧道', url: `${proto}://${hostHeader}${BASE}/relay`, note: '走 Cloudflare 临时隧道；部分网络会拦截 trycloudflare.com' })
+  }
+  return list
+}
 const server = createServer((req, res) => {
   const url = new URL(req.url || '/', 'http://localhost')
   const sub = url.pathname.startsWith(BASE) ? url.pathname.slice(BASE.length) : null
   Promise.resolve()
     .then(() => {
       if (sub === '/status' || sub === '/status/') {
-        html(res, 200, statusHtml({ relay: relayUrlFor(req), host: hostname(), rooms: roomsView(), updatedAt: now() }))
+        const portMatch = String(req.headers.host || '').match(/:(\d+)$/)
+        const port = portMatch ? Number(portMatch[1]) : PORT
+        html(res, 200, statusHtml({
+          host: hostname(),
+          rooms: roomsView(),
+          updatedAt: now(),
+          currentVia: String(req.headers.host || ''),
+          addresses: candidateAddresses(req, port),
+        }))
         return
       }
       if (sub === '/watch' || sub === '/watch/') {
