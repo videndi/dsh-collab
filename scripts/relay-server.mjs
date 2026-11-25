@@ -17,6 +17,9 @@
  * 「加入别人的协作室」直接填这个地址即可。
  */
 import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { hostname, networkInterfaces } from 'node:os'
 import { watchHtml } from './watch-page.mjs'
@@ -54,6 +57,69 @@ function roomCode(existing) {
 
 /** @type {Map<string, {id:string, code:string, createdAt:number, updatedAt:number, host:string, members:Map<string, any>, tokens:Map<string,string>, messages:any[]}>} */
 const rooms = new Map()
+// ── 落盘：房间与消息存到 data/rooms.json，中继重启后房间还在 ──────────────
+const ROOT_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
+const DATA_DIR = join(ROOT_DIR, 'data')
+const ROOMS_FILE = join(DATA_DIR, 'rooms.json')
+let saveTimer = null
+
+function persistRooms() {
+  try {
+    const payload = {
+      savedAt: now(),
+      rooms: [...rooms.values()].map((room) => ({
+        id: room.id,
+        code: room.code,
+        host: room.host,
+        createdAt: room.createdAt,
+        updatedAt: room.updatedAt,
+        messages: room.messages.slice(-200),
+      })),
+    }
+    mkdirSync(DATA_DIR, { recursive: true })
+    writeFileSync(ROOMS_FILE, JSON.stringify(payload), 'utf8')
+  } catch {
+    /* 落盘失败不影响服务 */
+  }
+}
+
+function scheduleSave() {
+  if (saveTimer) return
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    persistRooms()
+  }, 1500)
+  if (typeof saveTimer.unref === 'function') saveTimer.unref()
+}
+
+function loadRooms() {
+  try {
+    if (!existsSync(ROOMS_FILE)) return 0
+    const payload = JSON.parse(readFileSync(ROOMS_FILE, 'utf8'))
+    const idleMs = IDLE_HOURS * 3600_000
+    let restored = 0
+    for (const item of payload.rooms || []) {
+      if (!item || !item.code) continue
+      if (now() - (item.updatedAt || 0) > idleMs) continue
+      rooms.set(item.code, {
+        id: item.id || shortId('r'),
+        code: item.code,
+        host: item.host || 'relay',
+        createdAt: item.createdAt || now(),
+        updatedAt: item.updatedAt || now(),
+        members: new Map(),
+        tokens: new Map(),
+        messages: Array.isArray(item.messages) ? item.messages.slice(-200) : [],
+      })
+      restored += 1
+    }
+    return restored
+  } catch {
+    return 0
+  }
+}
+
+
 
 function roomsView() {
   return [...rooms.values()].map((room) => ({
@@ -192,6 +258,7 @@ function createRoom(name) {
   }
   rooms.set(room.code, room)
   trimRooms()
+  scheduleSave()
   return room
 }
 
@@ -283,6 +350,7 @@ function handleRelay(sub, req, res) {
       }
       const token = randomBytes(16).toString('hex')
       room.tokens.set(token, member.id)
+      scheduleSave()
       room.updatedAt = now()
       json(res, 200, {
         token,
@@ -507,10 +575,11 @@ const server = createServer((req, res) => {
 const sweeper = setInterval(trimRooms, 10 * 60_000)
 if (typeof sweeper.unref === 'function') sweeper.unref()
 
+const restoredRooms = loadRooms()
 server.listen(PORT, HOST, () => {
   const address = server.address()
   origin = `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${address.port}`
-  console.log(`dsh-collab relay 已启动：${relayUrl()}`)
+  console.log(`dsh-collab relay 已启动：${relayUrl()}${restoredRooms ? `（已恢复 ${restoredRooms} 个房间）` : ''}`)
   console.log(`  健康检查  GET  ${origin}${BASE}/relay/health`)
   console.log(`  房间列表  GET  ${origin}${BASE}/relay/rooms`)
   console.log(`  邀请落地页 GET  ${origin}${BASE}/join?c=<邀请码>`)
