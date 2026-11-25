@@ -20,6 +20,7 @@ import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { hostname } from 'node:os'
 import { watchHtml } from './watch-page.mjs'
+import { statusHtml } from './status-page.mjs'
 
 const args = process.argv.slice(2)
 const argOf = (name, fallback) => {
@@ -404,6 +405,10 @@ const server = createServer((req, res) => {
   const sub = url.pathname.startsWith(BASE) ? url.pathname.slice(BASE.length) : null
   Promise.resolve()
     .then(() => {
+      if (sub === '/status' || sub === '/status/') {
+        html(res, 200, statusHtml({ relay: relayUrlFor(req), host: hostname(), rooms: roomsView(), updatedAt: now() }))
+        return
+      }
       if (sub === '/watch' || sub === '/watch/') {
         const code = (url.searchParams.get('c') || url.searchParams.get('code') || '').toUpperCase()
         html(res, 200, watchHtml(code))
