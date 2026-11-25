@@ -623,6 +623,21 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 统一的「加入」动作：按钮点击、按回车都走它。永远不该因为 busy 而点不动。
+      const joinNow = async () => {
+        const target = (code || '').trim().toUpperCase()
+        if (!target) {
+          setError('先填房间号（房主给的 6 位码）')
+          return
+        }
+        if (sessionMode) {
+          const result = await call('/session/join', { sessionId: String(props.sessionId || ''), code: target })
+          if (result) setNotice(TEXT.joinedRoom)
+        } else {
+          await doJoin()
+        }
+      }
+
       return h(
         'div',
         { style: S.wrap, 'data-dsh-collab': 'panel' },
@@ -866,24 +881,14 @@ window.__ModuleLoader__.load({
                         placeholder: TEXT.code,
                         value: code,
                         onChange: (e) => setCode(e.target.value.toUpperCase()),
+                        onKeyDown: (e) => {
+                          if (e.key === 'Enter') void joinNow()
+                        },
                       }),
                       h('button', {
                         type: 'button',
                         style: S.btn,
-                        disabled: busy,
-                        onClick: async () => {
-                          if (sessionMode) {
-                            const code = (codeInput || '').trim().toUpperCase()
-                            if (!code) {
-                              setError('需要房间号')
-                              return
-                            }
-                            const result = await call('/session/join', { sessionId: String(props.sessionId || ''), code })
-                            if (result) setNotice(TEXT.joinedRoom)
-                          } else {
-                            await doJoin()
-                          }
-                        },
+                        onClick: () => void joinNow(),
                       }, TEXT.join),
                     ),
                     notice ? h('div', { style: S.label }, notice) : null,
