@@ -4,3 +4,7 @@ node_modules/
 Thumbs.db
 *.tmp
 .collab-lab/
+
+dist/
+relay.log
+relay.err.log
