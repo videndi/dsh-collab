@@ -40,6 +40,8 @@ window.__ModuleLoader__.load({
       tokens: 'token',
       noSession: '暂无进行的会话',
       scanHint: '手机扫码，或把链接发给朋友（他在自己的 DSH 里打开会自动带出邀请码）。',
+      loopbackBlocked:
+        '注意：你的 DSH 现在只监听 127.0.0.1，任何人（同局域网 / Tailscale 上的队友）都连不进来。先做一次入口：tailscale serve --bg <端口>（或 funnel），把得到的 https 地址填进「固定地址」并保存；也可以用独立 relay（scripts/relay-server.mjs）并把它的地址填进去。',
       loopbackWarning:
         '这台机器没有局域网 IPv4，邀请地址是 127.0.0.1：只有同一台电脑上的 DSH 能加入。要跨机器请让 DSH 监听局域网地址后重进本面板。',
       lanHint: '朋友要在他自己的 DSH 里加入时，relay 地址用上面这个（你的局域网地址）。',
@@ -774,7 +776,13 @@ window.__ModuleLoader__.load({
                             h(
                               'div',
                               { style: S.warn },
-                              invite.channel === 'tunnel' ? TEXT.tunnelHint : invite.reachable ? TEXT.lanHint : TEXT.loopbackWarning,
+                              invite.loopbackOnly
+                                ? TEXT.loopbackBlocked
+                                : invite.channel === 'tunnel'
+                                  ? TEXT.tunnelHint
+                                  : invite.reachable
+                                    ? TEXT.lanHint
+                                    : TEXT.loopbackWarning,
                             ),
                           ),
                         )

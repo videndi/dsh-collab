@@ -35,6 +35,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { connect as netConnect } from 'node:net'
 import { homedir, hostname, networkInterfaces, userInfo } from 'node:os'
 import { dirname, join as joinPath } from 'node:path'
 import { qrSvgPath } from './qr.js'
@@ -300,6 +301,49 @@ export function apply(ctx) {
   let qrCache = { key: '', value: null }
 
   const lab = { running: false, members: [] }
+
+  // 房主的 DSH 往往只监听 127.0.0.1：这时把局域网 IP 写进邀请链接会误导队友。
+  // 这里对每个网卡地址做一次真实 TCP 连接探测，只用探测成功的地址生成链接。
+  let reachableHosts = null // Set<string> | null（null = 还没测过）
+  let probeTimer = null
+
+  async function probeReachableHosts() {
+    const ips = lanIPv4()
+    if (!ips.length) {
+      reachableHosts = new Set()
+      return
+    }
+    let port = 0
+    try {
+      const url = new URL(originOf())
+      port = Number(url.port || (url.protocol === 'https:' ? 443 : 80))
+    } catch {
+      return
+    }
+    const alive = new Set()
+    await Promise.all(
+      ips.map(
+        (ip) =>
+          new Promise((resolve) => {
+            const socket = netConnect({ host: ip, port, timeout: 900 })
+            const done = (ok) => {
+              if (ok) alive.add(ip)
+              socket.destroy()
+              resolve()
+            }
+            socket.once('connect', () => done(true))
+            socket.once('timeout', () => done(false))
+            socket.once('error', () => done(false))
+          }),
+      ),
+    )
+    reachableHosts = alive
+    bump()
+  }
+
+  void probeReachableHosts()
+  probeTimer = setInterval(() => void probeReachableHosts(), 60_000)
+  if (probeTimer && typeof probeTimer.unref === 'function') probeTimer.unref()
 
   // ── 公网隧道：把 relay 暴露成一个临时 https 域名，跨网段也能加入 ────────
   // 注意只暴露 relay + 邀请落地页，不暴露 DSH 自己的 Web UI：隧道指向插件
@@ -678,10 +722,20 @@ export function apply(ctx) {
         return '53796'
       }
     })()
-    const lan = lanIPv4()
+    const allLan = lanIPv4()
+    const lan = reachableHosts ? allLan.filter((ip) => reachableHosts.has(ip)) : allLan
     const local = `${origin}${BASE}/relay`
     const lanRelay = lan.length ? `http://${lan[0]}:${port}${BASE}/relay` : local
-    return { origin, port, lan, local, lanRelay, reachable: lan.length > 0 }
+    return {
+      origin,
+      port,
+      lan,
+      allLan,
+      local,
+      lanRelay,
+      reachable: lan.length > 0,
+      loopbackOnly: reachableHosts !== null && lan.length === 0,
+    }
   }
 
   function inviteOf() {
@@ -724,7 +778,9 @@ export function apply(ctx) {
       publicRelay,
       publicBaseUrl: state.publicBaseUrl || null,
       lan: addrs.lan,
+      allLan: addrs.allLan,
       reachable: addrs.reachable,
+      loopbackOnly: addrs.loopbackOnly,
       joinPage: `${(publicRelay || tunnelRelay || addrs.local).replace(/\/relay$/, '')}/join?c=${encodeURIComponent(code)}`,
       qr: qrCache.value,
       plain: `relay=${publicRelay || tunnelRelay || (addrs.reachable ? addrs.lanRelay : addrs.local)}\ncode=${code}`,
