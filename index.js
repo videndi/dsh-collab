@@ -425,7 +425,14 @@ export function apply(ctx) {
       create: false,
     })
     if (!joined.ok || !joined.payload || !joined.payload.token) return { error: '加入房间失败（' + joined.status + '）' }
-    bindings.set(String(sessionId), { code, relay, token: joined.payload.token, snap: null, lastAt: 0 })
+    bindings.set(String(sessionId), {
+      code,
+      relay,
+      token: joined.payload.token,
+      snap: null,
+      lastAt: 0,
+      label: view ? view.label : '这个会话',
+    })
     persistBindings()
     void reportBinding(String(sessionId), bindings.get(String(sessionId)))
     return { code, relay }
@@ -446,7 +453,14 @@ export function apply(ctx) {
     if (!joined.ok || !joined.payload || !joined.payload.token) {
       return { error: joined.status === 404 ? '没找到房间 ' + target : '加入失败（' + joined.status + '）' }
     }
-    bindings.set(String(sessionId), { code: target, relay, token: joined.payload.token, snap: null, lastAt: 0 })
+    bindings.set(String(sessionId), {
+      code: target,
+      relay,
+      token: joined.payload.token,
+      snap: null,
+      lastAt: 0,
+      label: (sessionViewOf(sessionId) || {}).label || '这个会话',
+    })
     persistBindings()
     void reportBinding(String(sessionId), bindings.get(String(sessionId)))
     return { code: target, relay }
@@ -454,8 +468,22 @@ export function apply(ctx) {
 
   async function reportBinding(sessionId, binding) {
     if (!binding || !binding.token) return
-    const view = sessionViewOf(sessionId)
-    if (!view) return
+    // 会话可能还没有任何事件（比如刚重启后没打开过它）：仍然要上报一个最小视图，
+    // 否则这个绑定会一直静默，面板里就永远显示"0 人"。
+    const view = sessionViewOf(sessionId) || {
+      id: String(sessionId),
+      label: binding.label || '这个会话',
+      preset: 'collab',
+      status: 'idle',
+      tool: null,
+      note: null,
+      turn: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      at: now(),
+      timeline: [],
+      artifacts: [],
+    }
     try {
       const reported = await relayPost(binding.relay, '/report', {
         token: binding.token,
@@ -1525,6 +1553,7 @@ export function apply(ctx) {
       const requestedSession = stateUrl.searchParams.get('session') || ''
       if (requestedSession) {
         const rec = localSessions.get(requestedSession)
+        const boundLabel = bindings.get(requestedSession) ? bindings.get(requestedSession).label : ''
         const knownPreset =
           livePresetOf(requestedSession) ||
           (rec && rec.preset) ||

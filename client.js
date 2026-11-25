@@ -71,6 +71,8 @@ window.__ModuleLoader__.load({
       roomOpened: '这个会话的协作室已建好，把房间号发给队友',
       joinedRoom: '已加入，这个会话现在和队友共享',
       sessionRoomOnly: '这个会话是「协作模式」：它有自己的房间，和别的会话互不影响。',
+      sessionRoomBound: '✓ 这个会话绑定了房间，进度与成果正在共享给房间里的人',
+      roomPending: '房间已绑定，正在连接中继…',
       advanced: '高级：手工填 relay / 粘贴邀请链接 / 二维码文本',
       livingRoom: '客厅（共享：成员 · 进度 · 资料 · 消息）',
       sharedHint: '✓ 当前会话是「协作模式」，正在客厅共享',
@@ -573,7 +575,7 @@ window.__ModuleLoader__.load({
       const barText = !active
         ? TEXT.idleTitle
         : '协作室 ' +
-          ((snap && snap.code) || '') +
+          ((effective && effective.code) || '') +
           ' · ' +
           members.length +
           ' 人 · ' +
@@ -903,7 +905,7 @@ window.__ModuleLoader__.load({
                         'div',
                         { style: { ...S.row, gap: 10, alignItems: 'baseline' } },
                         h('span', { style: S.label }, TEXT.invite),
-                        h('span', { style: S.code }, (snap && snap.code) || '------'),
+                        h('span', { style: S.code }, (effective && effective.code) || '------'),
                         h('span', { style: S.badge }, mode === 'host' ? '房主' : '成员'),
                       ),
                       h(
@@ -914,7 +916,7 @@ window.__ModuleLoader__.load({
                               'div',
                               { style: { ...S.row, gap: 8 } },
                               h('span', { style: { ...S.label, color: 'var(--dsw-alias-label-secondary, #9aa0a6)' } },
-                                TEXT.projectLabel + '：' + ((snap && snap.project && snap.project.name) || '未命名')),
+                                TEXT.projectLabel + '：' + ((effective && effective.project && effective.project.name) || (sessionMode ? '这个会话' : '未命名'))),
                               (snap && snap.project && snap.project.cwd)
                                 ? h('span', { style: { ...S.label, ...S.ellipsis, maxWidth: 260 } }, snap.project.cwd)
                                 : null,
@@ -1001,8 +1003,12 @@ window.__ModuleLoader__.load({
                       ? h(
                           'div',
                           { style: S.row, gap: 8 },
-                          h('div', { style: isShared === false ? S.warn : S.label },
-                            isShared === false ? TEXT.notSharedHint : TEXT.sharedHint),
+                          h('div', { style: sessionMode || isShared !== false ? S.label : S.warn },
+                            sessionMode
+                              ? TEXT.sessionRoomBound
+                              : isShared === false
+                                ? TEXT.notSharedHint
+                                : TEXT.sharedHint),
                           h('button', {
                             type: 'button',
                             style: { ...S.badge, cursor: 'pointer', background: 'transparent' },
@@ -1039,7 +1045,7 @@ window.__ModuleLoader__.load({
                             h(
                               'div',
                               { style: S.warn },
-                              invite.loopbackOnly
+                              (effective && effective.sessionMode) ? null : invite.loopbackOnly
                                 ? TEXT.loopbackBlocked
                                 : invite.channel === 'tunnel'
                                   ? TEXT.tunnelHint
@@ -1049,7 +1055,11 @@ window.__ModuleLoader__.load({
                             ),
                           ),
                         )
-                      : h('div', { style: { ...S.label, wordBreak: 'break-all' } }, TEXT.relayLabel + '：' + ((snap && snap.relay) || relay)),
+                      : h(
+                          'div',
+                          { style: { ...S.label, wordBreak: 'break-all' } },
+                          TEXT.relayLabel + '：' + ((invite && invite.relay) || (effective && effective.relay) || relay || '（未配置）'),
+                        ),
                     invite && invite.channel === 'relay'
                       ? h('div', { style: S.label }, TEXT.relayInviteHint)
                       : null,
