@@ -31,13 +31,19 @@ token 计数），模型调用永远发生在各人自己的机器上，用各�
 
 ## 安装
 
-把本目录放到任意位置，在你的 DSH 里（协作模式 / 创造模式都行）让 agent 执行：
-
-```
-plugin_manager action=install_bundle target=<本目录绝对路径>
+```bash
+git clone https://github.com/videndi/dsh-collab.git
 ```
 
-然后**重启一次 DSH**（Host 侧 JS 不热替换），刷新页面即可在输入框下方看到协作面板。
+然后在你自己的 DSH 里（协作模式 / 创造模式都行）让 agent 执行，target 用刚克隆下来的目录：
+
+```
+plugin_manager action=install_bundle target=<克隆目录的绝对路径>
+```
+
+最后**重启一次 DSH**（Host 侧 JS 不热替换），刷新页面，输入框下方就会出现协作条。
+
+> 朋友那边同样一份代码、同样一条命令，各人用各人的账号，token 各算各的。
 
 ## 用起来
 
