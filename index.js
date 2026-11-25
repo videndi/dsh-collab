@@ -327,6 +327,8 @@ export function apply(ctx) {
   // ── 会话级房间（一栋楼里的不同房间）──────────────────────────────────
   // 每个「协作模式」会话各自一个房间：谁在这个会话里开协作，队友加入同一个房间号，
   // 才看得到这个会话的客厅；其它会话（其它项目）互不可见。
+  // 会话模式切换事件里的最新 preset（会话还没产生事件时也能判断"是不是协作模式"）
+  const presetOfSession = new Map()
   const bindings = new Map()
   let bindingTimer = null
   let bindingBusy = false
@@ -347,6 +349,21 @@ export function apply(ctx) {
 
   function persistBindings() {
     saveSettings({ bindings: serializeBindings() })
+  }
+
+  /** 读 live agent 当前挂的 preset（切换过模式的会话，header 里还是旧值）。 */
+  function livePresetOf(sessionId) {
+    try {
+      const agents = ctx.get ? ctx.get('agents') : undefined
+      const presets = ctx.get ? ctx.get('agentPresets') : undefined
+      if (!agents || !presets || typeof agents.get !== 'function') return ''
+      const agent = agents.get(sessionId)
+      if (!agent || !agent.ctx) return ''
+      const preset = presets.composedPreset(agent.ctx)
+      return typeof preset === 'string' ? preset : ''
+    } catch {
+      return ''
+    }
   }
 
   function sessionViewOf(sessionId) {
@@ -854,7 +871,7 @@ export function apply(ctx) {
         id,
         label: labelOf(session),
         cwd: session && session.header && typeof session.header.cwd === 'string' ? session.header.cwd : null,
-        preset: presetOf(session),
+        preset: presetOfSession.get(id) || livePresetOf(id) || presetOf(session),
         status: 'idle',
         tool: null,
         note: null,
@@ -1121,6 +1138,16 @@ export function apply(ctx) {
   }
 
   // ── 会话事件桥 ────────────────────────────────────────────────────────
+
+  // 会话里切换 Agent 模式（例如从标准切到协作模式）时，会发这个事件
+  ctx.on('agent-preset/selected', (sessionId, agentPreset) => {
+    if (sessionId === undefined || sessionId === null) return
+    const key = String(sessionId)
+    if (agentPreset) presetOfSession.set(key, String(agentPreset))
+    const rec = localSessions.get(key)
+    if (rec && agentPreset) rec.preset = String(agentPreset)
+    bump()
+  })
 
   ctx.on('session/event', (session, event) => {
     if (!session || !event) return
@@ -1498,7 +1525,12 @@ export function apply(ctx) {
       const requestedSession = stateUrl.searchParams.get('session') || ''
       if (requestedSession) {
         const rec = localSessions.get(requestedSession)
-        const isCollab = String((rec && rec.preset) || '').toLowerCase() === 'collab'
+        const knownPreset =
+          livePresetOf(requestedSession) ||
+          (rec && rec.preset) ||
+          presetOfSession.get(requestedSession) ||
+          ''
+        const isCollab = String(knownPreset || '').toLowerCase() === 'collab'
         const binding = bindings.get(requestedSession)
         let invite = null
         if (binding && binding.code) {
