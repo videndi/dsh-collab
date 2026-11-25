@@ -324,6 +324,168 @@ export function apply(ctx) {
   let flushTimer = null
   let qrCache = { key: '', value: null }
 
+  // ── 会话级房间（一栋楼里的不同房间）──────────────────────────────────
+  // 每个「协作模式」会话各自一个房间：谁在这个会话里开协作，队友加入同一个房间号，
+  // 才看得到这个会话的客厅；其它会话（其它项目）互不可见。
+  const bindings = new Map()
+  let bindingTimer = null
+  let bindingBusy = false
+
+  function serializeBindings() {
+    const out = {}
+    for (const [sessionId, item] of bindings) out[sessionId] = { code: item.code, relay: item.relay }
+    return out
+  }
+
+  function restoreBindings() {
+    const saved = persisted.bindings && typeof persisted.bindings === 'object' ? persisted.bindings : {}
+    for (const [sessionId, item] of Object.entries(saved)) {
+      if (!item || !item.code || !item.relay) continue
+      bindings.set(String(sessionId), { code: String(item.code), relay: String(item.relay), token: '', snap: null, lastAt: 0 })
+    }
+  }
+
+  function persistBindings() {
+    saveSettings({ bindings: serializeBindings() })
+  }
+
+  function sessionViewOf(sessionId) {
+    const rec = localSessions.get(String(sessionId))
+    if (!rec) return null
+    return {
+      id: rec.id,
+      label: rec.label,
+      preset: rec.preset,
+      status: rec.status,
+      tool: rec.tool,
+      note: rec.note,
+      turn: rec.turn,
+      tokensIn: rec.tokensIn,
+      tokensOut: rec.tokensOut,
+      at: rec.at,
+      timeline: rec.timeline.filter((entry) => state.shareTranscript || entry.kind !== 'say').slice(-TIMELINE_WIRE),
+      artifacts: rec.artifacts.slice(0, ARTIFACTS_WIRE).map(({ text, ...meta }) => meta),
+    }
+  }
+
+  function artifactBodiesOf(sessionId) {
+    const rec = localSessions.get(String(sessionId))
+    if (!rec || !rec.artifacts.length) return {}
+    const bucket = {}
+    for (const art of rec.artifacts) if (typeof art.text === 'string') bucket[art.id] = art.text
+    return Object.keys(bucket).length ? { [rec.id]: bucket } : {}
+  }
+
+  async function relayPost(relay, path, body) {
+    const response = await fetch(relay.replace(/\/+$/, '') + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      signal: AbortSignal.timeout(10000),
+    })
+    const payload = await response.json().catch(() => null)
+    return { ok: response.ok, status: response.status, payload }
+  }
+
+  async function relayGet(relay, path) {
+    const response = await fetch(relay.replace(/\/+$/, '') + path, { signal: AbortSignal.timeout(10000) })
+    const payload = await response.json().catch(() => null)
+    return { ok: response.ok, status: response.status, payload }
+  }
+
+  async function createRoomForSession(sessionId) {
+    const relay = state.homeRelay
+    if (!relay) return { error: '还没有中继地址' }
+    const view = sessionViewOf(sessionId)
+    const created = await relayPost(relay, '/room', { name: view ? view.label : 'collab' })
+    if (!created.ok || !created.payload || !created.payload.code) return { error: '建房间失败（' + created.status + '）' }
+    const code = created.payload.code
+    const joined = await relayPost(relay, '/join', {
+      code,
+      name: state.self.name,
+      machine: hostname(),
+      deviceId: state.self.installId,
+      create: false,
+    })
+    if (!joined.ok || !joined.payload || !joined.payload.token) return { error: '加入房间失败（' + joined.status + '）' }
+    bindings.set(String(sessionId), { code, relay, token: joined.payload.token, snap: null, lastAt: 0 })
+    persistBindings()
+    void reportBinding(String(sessionId), bindings.get(String(sessionId)))
+    return { code, relay }
+  }
+
+  async function joinRoomForSession(sessionId, code, relayOverride) {
+    const relay = relayOverride || state.homeRelay
+    if (!relay) return { error: '还没有中继地址' }
+    const target = String(code || '').trim().toUpperCase()
+    if (!target) return { error: '需要房间号' }
+    const joined = await relayPost(relay, '/join', {
+      code: target,
+      name: state.self.name,
+      machine: hostname(),
+      deviceId: state.self.installId,
+      create: false,
+    })
+    if (!joined.ok || !joined.payload || !joined.payload.token) {
+      return { error: joined.status === 404 ? '没找到房间 ' + target : '加入失败（' + joined.status + '）' }
+    }
+    bindings.set(String(sessionId), { code: target, relay, token: joined.payload.token, snap: null, lastAt: 0 })
+    persistBindings()
+    void reportBinding(String(sessionId), bindings.get(String(sessionId)))
+    return { code: target, relay }
+  }
+
+  async function reportBinding(sessionId, binding) {
+    if (!binding || !binding.token) return
+    const view = sessionViewOf(sessionId)
+    if (!view) return
+    try {
+      const reported = await relayPost(binding.relay, '/report', {
+        token: binding.token,
+        name: state.self.name,
+        sessions: [view],
+        artifactBodies: artifactBodiesOf(sessionId),
+      })
+      if (!reported.ok) {
+        if (reported.status === 403 || reported.status === 404) {
+          const rejoined = await relayPost(binding.relay, '/join', {
+            code: binding.code,
+            name: state.self.name,
+            machine: hostname(),
+            deviceId: state.self.installId,
+            create: true,
+          })
+          if (rejoined.ok && rejoined.payload && rejoined.payload.token) binding.token = rejoined.payload.token
+        }
+        return
+      }
+      const snap = await relayGet(binding.relay, '/snapshot?token=' + encodeURIComponent(binding.token))
+      if (snap.ok && snap.payload) {
+        binding.snap = snap.payload
+        binding.lastAt = now()
+      }
+    } catch {
+      /* 下个周期再试 */
+    }
+  }
+
+  async function tickBindings() {
+    if (bindingBusy) return
+    bindingBusy = true
+    try {
+      for (const [sessionId, binding] of bindings) await reportBinding(sessionId, binding)
+    } finally {
+      bindingBusy = false
+    }
+    pushToClients()
+  }
+
+  function dropBinding(sessionId) {
+    bindings.delete(String(sessionId))
+    persistBindings()
+    pushToClients()
+  }
+
   const lab = { running: false, members: [] }
 
   // 房主的 DSH 往往只监听 127.0.0.1：这时把局域网 IP 写进邀请链接会误导队友。
@@ -393,6 +555,11 @@ export function apply(ctx) {
     }, 5000)
     if (resumeTimer && typeof resumeTimer.unref === 'function') resumeTimer.unref()
   }
+
+  // 会话级房间：恢复上次绑定，每 2 秒给每个已绑定会话各上报一次
+  restoreBindings()
+  bindingTimer = setInterval(() => void tickBindings(), GUEST_TICK_MS)
+  if (bindingTimer && typeof bindingTimer.unref === 'function') bindingTimer.unref()
 
   void probeReachableHosts()
   probeTimer = setInterval(() => void probeReachableHosts(), 60_000)
@@ -1327,6 +1494,39 @@ export function apply(ctx) {
 
   async function handleApi(sub, req, res) {
     if (sub === '/api/state' && req.method === 'GET') {
+      const stateUrl = new URL(req.url || '/', 'http://localhost')
+      const requestedSession = stateUrl.searchParams.get('session') || ''
+      if (requestedSession) {
+        const rec = localSessions.get(requestedSession)
+        const isCollab = String((rec && rec.preset) || '').toLowerCase() === 'collab'
+        const binding = bindings.get(requestedSession)
+        let invite = null
+        if (binding && binding.code) {
+          const relayBase = binding.relay
+          const origin = relayBase.indexOf(BASE + '/relay') >= 0 ? relayBase.split(BASE + '/relay')[0] : relayBase
+          const landing = origin + BASE + '/join?c=' + encodeURIComponent(binding.code)
+          let qr = null
+          try {
+            const result = qrSvgPath(landing, { ecl: 'M', quiet: 2 })
+            qr = { path: result.path, dimension: result.dimension, version: result.version }
+          } catch {
+            qr = null
+          }
+          invite = { code: binding.code, primaryUrl: landing, relay: binding.relay, qr }
+        }
+        sendJson(res, 200, {
+          mode: 'session',
+          sessionId: requestedSession,
+          isCollabSession: isCollab,
+          session: rec ? sessionViewOf(requestedSession) : null,
+          binding: binding ? { code: binding.code, relay: binding.relay, lastAt: binding.lastAt } : null,
+          snap: binding ? binding.snap : null,
+          invite,
+          self: { id: state.self.id, name: state.self.name },
+          settings: { homeRelay: state.homeRelay || '', shareTranscript: !!state.shareTranscript },
+        })
+        return
+      }
       sendJson(res, 200, snapshot())
       return
     }
@@ -1496,6 +1696,31 @@ export function apply(ctx) {
     if (sub === '/api/lab/stop') {
       const result = labStop()
       sendJson(res, 200, { ok: true, ...result, snapshot: snapshot() })
+      return
+    }
+    if (sub === '/api/session/room') {
+      const sessionId = String(body.sessionId || '')
+      if (!sessionId) {
+        sendJson(res, 400, { error: '缺少 sessionId' })
+        return
+      }
+      const result = await createRoomForSession(sessionId)
+      sendJson(res, result.error ? 502 : 200, result)
+      return
+    }
+    if (sub === '/api/session/join') {
+      const sessionId = String(body.sessionId || '')
+      if (!sessionId) {
+        sendJson(res, 400, { error: '缺少 sessionId' })
+        return
+      }
+      const result = await joinRoomForSession(sessionId, body.code, body.relay)
+      sendJson(res, result.error ? 502 : 200, result)
+      return
+    }
+    if (sub === '/api/session/leave') {
+      dropBinding(String(body.sessionId || ''))
+      sendJson(res, 200, { ok: true })
       return
     }
     if (sub === '/api/settings') {
@@ -1794,6 +2019,8 @@ ol li{margin:6px 0}
 
   ctx.effect(() => () => {
     stopGuestLoop()
+    if (bindingTimer) clearInterval(bindingTimer)
+    bindingTimer = null
     tunnelStop()
     if (relayServer) {
       try {

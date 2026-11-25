@@ -63,6 +63,10 @@ window.__ModuleLoader__.load({
       findRoom: '查找',
       roomFound: '找到房间',
       roomJoin: '进入客厅',
+      openForSession: '为这个会话开协作室',
+      roomOpened: '这个会话的协作室已建好，把房间号发给队友',
+      joinedRoom: '已加入，这个会话现在和队友共享',
+      sessionRoomOnly: '这个会话是「协作模式」：它有自己的房间，和别的会话互不影响。',
       advanced: '高级：手工填 relay / 粘贴邀请链接 / 二维码文本',
       livingRoom: '客厅（共享：成员 · 进度 · 资料 · 消息）',
       sharedHint: '✓ 当前会话是「协作模式」，正在客厅共享',
@@ -422,7 +426,8 @@ window.__ModuleLoader__.load({
         let timer = null
         const load = async () => {
           try {
-            const res = await fetch(API + '/state', { headers: { accept: 'application/json' } })
+            const sid = props && props.sessionId ? String(props.sessionId) : ''
+            const res = await fetch(API + '/state' + (sid ? '?session=' + encodeURIComponent(sid) : ''), { headers: { accept: 'application/json' } })
             if (!res.ok) throw new Error('state ' + res.status)
             const data = await res.json()
             if (!mounted.current) return
@@ -460,7 +465,11 @@ window.__ModuleLoader__.load({
           const res = await fetch(API + path, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body || {}),
+            body: JSON.stringify(
+              sessionMode && props && props.sessionId
+                ? { ...(body || {}), sessionId: String(props.sessionId) }
+                : body || {},
+            ),
           })
           const data = await res.json().catch(() => ({}))
           if (!res.ok) {
@@ -491,13 +500,35 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const mode = (snap && snap.mode) || 'offline'
+      // 会话级视图：只有「协作模式」会话才渲染任何东西
+      const sessionMode = !!(snap && snap.mode === 'session')
+      if (sessionMode && !snap.isCollabSession) return null
+
+      const effective = sessionMode
+        ? {
+            mode: snap.binding ? 'host' : 'offline',
+            sessionMode: true,
+            isCollabSession: true,
+            code: snap.binding ? snap.binding.code : '',
+            invite: snap.invite,
+            members: (snap.snap && snap.snap.members) || [],
+            messages: (snap.snap && snap.snap.messages) || [],
+            project: snap.session ? { name: snap.session.label } : null,
+            lab: { running: false, members: [] },
+            tunnel: null,
+            settings: snap.settings,
+            localSessions: [],
+            bound: !!snap.binding,
+          }
+        : snap
+
+      const mode = (effective && effective.mode) || 'offline'
       const active = mode === 'host' || mode === 'guest'
-      const invite = snap && snap.invite
-      const members = (snap && snap.members) || []
-      const messages = (snap && snap.messages) || []
-      const lab = (snap && snap.lab) || { running: false, members: [] }
-      const tunnelInfo = (snap && snap.tunnel) || null
+      const invite = effective && effective.invite
+      const members = (effective && effective.members) || []
+      const messages = (effective && effective.messages) || []
+      const lab = (effective && effective.lab) || { running: false, members: [] }
+      const tunnelInfo = (effective && effective.tunnel) || null
 
       // 当前会话是否在客厅里共享（只有协作模式的会话会出现在 members[自己].sessions）
       const selfMember = members.find((m) => m.self)
@@ -676,8 +707,20 @@ window.__ModuleLoader__.load({
                     ),
                     h(
                       'button',
-                      { type: 'button', style: S.btnWide, disabled: busy, onClick: () => call('/create', { name }) },
-                      busy ? TEXT.saving : TEXT.create,
+                      {
+                        type: 'button',
+                        style: S.btnWide,
+                        disabled: busy,
+                        onClick: async () => {
+                          if (sessionMode) {
+                            const result = await call('/session/room', { sessionId: String(props.sessionId || '') })
+                            if (result) setNotice(TEXT.roomOpened)
+                          } else {
+                            await call('/create', { name })
+                          }
+                        },
+                      },
+                      busy ? TEXT.saving : sessionMode ? TEXT.openForSession : TEXT.create,
                     ),
                     h('div', { style: S.label }, TEXT.createHint),
                     h('div', { style: { ...S.row, marginTop: 2 } },
@@ -766,7 +809,24 @@ window.__ModuleLoader__.load({
                         value: code,
                         onChange: (e) => setCode(e.target.value.toUpperCase()),
                       }),
-                      h('button', { type: 'button', style: S.btn, disabled: busy, onClick: doJoin }, TEXT.join),
+                      h('button', {
+                        type: 'button',
+                        style: S.btn,
+                        disabled: busy,
+                        onClick: async () => {
+                          if (sessionMode) {
+                            const code = (codeInput || '').trim().toUpperCase()
+                            if (!code) {
+                              setError('需要房间号')
+                              return
+                            }
+                            const result = await call('/session/join', { sessionId: String(props.sessionId || ''), code })
+                            if (result) setNotice(TEXT.joinedRoom)
+                          } else {
+                            await doJoin()
+                          }
+                        },
+                      }, TEXT.join),
                     ),
                     notice ? h('div', { style: S.label }, notice) : null,
                   )
@@ -813,7 +873,7 @@ window.__ModuleLoader__.load({
                                 : null,
                             )
                           : null,
-                        mode === 'host'
+                        mode === 'host' && !(effective && effective.sessionMode)
                           ? h(
                               'div',
                               { style: { ...S.row, gap: 6 } },
@@ -851,7 +911,7 @@ window.__ModuleLoader__.load({
                               ),
                             )
                           : null,
-                        mode === 'host'
+                        mode === 'host' && !(effective && effective.sessionMode)
                           ? h(
                               'div',
                               { style: { ...S.row, gap: 8 } },
@@ -875,7 +935,18 @@ window.__ModuleLoader__.load({
                         mode === 'host' && invite
                           ? h('button', { type: 'button', style: S.btn, onClick: () => copy(invite.primaryUrl, 'invite') }, copied === 'invite' ? TEXT.copied : TEXT.copy)
                           : null,
-                        h('button', { type: 'button', style: S.btn, disabled: busy, onClick: () => call('/leave') }, TEXT.leave),
+                        h('button', {
+                          type: 'button',
+                          style: S.btn,
+                          disabled: busy,
+                          onClick: async () => {
+                            if (sessionMode) {
+                              await call('/session/leave', { sessionId: String(props.sessionId || '') })
+                            } else {
+                              await call('/leave')
+                            }
+                          },
+                        }, TEXT.leave),
                       ),
                     ),
 
@@ -935,7 +1006,7 @@ window.__ModuleLoader__.load({
                     invite && invite.channel === 'relay'
                       ? h('div', { style: S.label }, TEXT.relayInviteHint)
                       : null,
-                    mode === 'host'
+                    mode === 'host' && !(effective && effective.sessionMode)
                       ? h(
                           'div',
                           { style: S.row },
