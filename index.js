@@ -281,6 +281,10 @@ export function apply(ctx) {
   const state = {
     // 固定公网地址（Tailscale Funnel / nginx / 固定隧道），设了就用它生成邀请链接
     publicBaseUrl: typeof persisted.publicBaseUrl === 'string' ? persisted.publicBaseUrl : '',
+    // 全团队只配一次的中继地址（配好后，加入只需要房间号，像搜微信号）
+    homeRelay: typeof persisted.homeRelay === 'string' ? persisted.homeRelay : '',
+    // 问答分离：默认不把模型的输出片段发给房间，只共享「做了什么 + 交付了什么」
+    shareTranscript: persisted.shareTranscript === true,
     mode: 'offline', // offline | host | guest
     self: { id: shortId('u'), name: defaultName(), machine: hostname() },
     room: null,
@@ -695,7 +699,9 @@ export function apply(ctx) {
         tokensIn: rec.tokensIn,
         tokensOut: rec.tokensOut,
         at: rec.at,
-        timeline: rec.timeline.slice(-TIMELINE_WIRE),
+        timeline: rec.timeline
+          .filter((entry) => state.shareTranscript || entry.kind !== 'say')
+          .slice(-TIMELINE_WIRE),
         artifacts: rec.artifacts.slice(0, ARTIFACTS_WIRE).map(({ text, ...meta }) => meta),
       }))
   }
@@ -818,6 +824,8 @@ export function apply(ctx) {
   function snapshot() {
     const settingsView = {
       publicBaseUrl: state.publicBaseUrl || '',
+      homeRelay: state.homeRelay || '',
+      shareTranscript: !!state.shareTranscript,
       settingsFile: settingsFile(),
       selfName: state.self.name,
     }
@@ -1377,10 +1385,14 @@ export function apply(ctx) {
       return
     }
     if (sub === '/api/join') {
-      const relay = String(body.relay || '').trim().replace(/\/+$/, '')
+      const relay = String(body.relay || state.homeRelay || '').trim().replace(/\/+$/, '')
       const code = String(body.code || '').trim().toUpperCase()
-      if (!relay || !code) {
-        sendJson(res, 400, { error: 'relay 地址与邀请码都要填（也可以直接粘贴邀请链接或二维码文本）' })
+      if (!code) {
+        sendJson(res, 400, { error: '还需要房间号（6 位）' })
+        return
+      }
+      if (!relay) {
+        sendJson(res, 400, { error: '还没有默认中继：先在上面填一次中继地址（全团队一样，填完以后只要房间号）' })
         return
       }
       if (body.name) state.self.name = String(body.name).slice(0, 40)
@@ -1459,6 +1471,19 @@ export function apply(ctx) {
         patch.publicBaseUrl = value
         state.publicBaseUrl = value
       }
+      if (typeof body.homeRelay === 'string') {
+        const value = body.homeRelay.trim().replace(/\/+$/, '')
+        if (value && !/^https?:\/\//i.test(value)) {
+          sendJson(res, 400, { error: '默认中继要以 http:// 或 https:// 开头' })
+          return
+        }
+        patch.homeRelay = value
+        state.homeRelay = value
+      }
+      if (typeof body.shareTranscript === 'boolean') {
+        patch.shareTranscript = body.shareTranscript
+        state.shareTranscript = body.shareTranscript
+      }
       if (typeof body.name === 'string' && body.name.trim()) {
         patch.name = body.name.trim().slice(0, 40)
         state.self.name = patch.name
@@ -1487,6 +1512,34 @@ export function apply(ctx) {
         })
       } catch (error) {
         sendJson(res, 502, { ok: false, error: String(error && error.message ? error.message : error) })
+      }
+      return
+    }
+    if (sub === '/api/discover') {
+      const code = String(body.code || '').trim().toUpperCase()
+      const relay = String(body.relay || state.homeRelay || '').trim().replace(/\/+$/, '')
+      if (!code) {
+        sendJson(res, 400, { error: '输入房间号，例如 3LMMJQ' })
+        return
+      }
+      if (!relay) {
+        sendJson(res, 400, { error: '先配一次默认中继地址' })
+        return
+      }
+      try {
+        const response = await fetch(`${relay}/room?code=${encodeURIComponent(code)}`, { signal: AbortSignal.timeout(8000) })
+        const payload = await response.json().catch(() => null)
+        if (!response.ok || !payload) {
+          sendJson(res, response.status === 404 ? 404 : 502, {
+            error: response.status === 404 ? `没找到房间 ${code}` : '中继没有回应',
+          })
+          return
+        }
+        sendJson(res, 200, { found: true, relay, room: payload })
+      } catch (error) {
+        sendJson(res, 502, {
+          error: `连不上中继 ${relay}：${error && error.message ? error.message : String(error)}`,
+        })
       }
       return
     }

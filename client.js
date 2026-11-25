@@ -54,7 +54,21 @@ window.__ModuleLoader__.load({
       tunnelError: '隧道启动失败：',
       tunnelHint: '公网隧道已开启：朋友在任何网络、任何机器上都能用这个链接加入（隧道随 DSH 关闭失效）。',
       projectLabel: '项目',
-      stepCreate: '第 1 步 · 创建协作室',
+      stepRelay: '第 0 步 · 配一次「中继」（全团队填同一个，之后只要房间号）',
+      relayPlaceholder: '中继地址，例如 http://10.10.22.81:8790/dsh-collab/relay',
+      relaySave: '保存中继',
+      relaySaved: '已保存：以后加入别人的房间只需要房间号',
+      roomCodePlaceholder: '输入房间号，例如 3LMMJQ',
+      findRoom: '查找',
+      roomFound: '找到房间',
+      roomJoin: '进入客厅',
+      advanced: '高级：手工填 relay / 粘贴邀请链接 / 二维码文本',
+      livingRoom: '客厅（共享：成员 · 进度 · 资料 · 消息）',
+      myDesk: '我的工作区（私有：这里的问答只在我这台机器上）',
+      shareTranscriptOff: '问答分离中：只共享「做了什么」和交付的文件',
+      shareTranscriptOn: '正在共享我的输出片段（会显示给房间成员）',
+      shareTranscriptToggle: '共享输出片段',
+      stepCreate: '第 1 步 · 创建协作室（或用房间号进入别人的）',
       createHint: '创建后会立刻生成：二维码 + 邀请链接 + 6 位随机邀请码，都在下面这个面板里。',
       inviteStep: '第 2 步 · 把这个发给朋友（扫二维码 / 发链接 / 发邀请码都行）',
       relayInviteHint: '这个二维码指向中继的加入说明页：朋友扫码或点链接就知道该往自己的 DSH 里填什么。',
@@ -390,6 +404,10 @@ window.__ModuleLoader__.load({
       const [preview, setPreview] = React.useState(null)
       const [sharePath, setSharePath] = React.useState('')
       const [publicBase, setPublicBase] = React.useState('')
+      const [homeRelay, setHomeRelay] = React.useState('')
+      const [roomCode, setRoomCode] = React.useState('')
+      const [found, setFound] = React.useState(null)
+      const [shareOut, setShareOut] = React.useState(false)
       const mounted = React.useRef(true)
       const prefilled = React.useRef(false)
 
@@ -406,6 +424,8 @@ window.__ModuleLoader__.load({
             setError('')
             if (data && data.self && data.self.name && !name) setName(data.self.name)
             if (data && data.settings && data.settings.publicBaseUrl && !publicBase) setPublicBase(data.settings.publicBaseUrl)
+            if (data && data.settings && data.settings.homeRelay && !homeRelay) setHomeRelay(data.settings.homeRelay)
+            if (data && data.settings && typeof data.settings.shareTranscript === 'boolean') setShareOut(data.settings.shareTranscript)
             if (!prefilled.current) {
               const fromUrl = inviteFromLocation()
               if (fromUrl && data && data.mode === 'offline') {
@@ -564,6 +584,72 @@ window.__ModuleLoader__.load({
                     React.Fragment,
                     null,
                     h('div', { style: S.label }, TEXT.idleHint),
+
+                    h('div', { style: S.step }, TEXT.stepRelay),
+                    h('div', { style: S.row, gap: 6 },
+                      h('input', {
+                        style: S.input,
+                        placeholder: TEXT.relayPlaceholder,
+                        value: homeRelay,
+                        onChange: (e) => setHomeRelay(e.target.value),
+                      }),
+                      h('button', {
+                        type: 'button',
+                        style: S.btn,
+                        disabled: busy || !homeRelay.trim(),
+                        onClick: async () => {
+                          const saved = await call('/settings', { homeRelay: homeRelay.trim() })
+                          if (saved) setNotice(TEXT.relaySaved)
+                        },
+                      }, TEXT.relaySave),
+                    ),
+                    h('div', { style: S.row, gap: 6 },
+                      h('input', {
+                        style: S.input,
+                        placeholder: TEXT.roomCodePlaceholder,
+                        value: roomCode,
+                        onChange: (e) => { setRoomCode(e.target.value.toUpperCase()); setFound(null) },
+                        onKeyDown: async (e) => {
+                          if (e.key !== 'Enter') return
+                          e.preventDefault()
+                          if (!roomCode.trim()) return
+                          const result = await call('/discover', { code: roomCode.trim() })
+                          if (result && result.found) setFound(result.room)
+                        },
+                      }),
+                      h('button', {
+                        type: 'button',
+                        style: S.btn,
+                        disabled: busy || !roomCode.trim(),
+                        onClick: async () => {
+                          const result = await call('/discover', { code: roomCode.trim() })
+                          if (result && result.found) setFound(result.room)
+                        },
+                      }, TEXT.findRoom),
+                    ),
+                    found
+                      ? h('div', { style: S.board },
+                          h('div', { style: S.session },
+                            h('span', { style: { ...S.dot, width: 6, height: 6, background: 'var(--dsw-alias-state-success-primary, #3fb950)' } }),
+                            h('span', { style: { fontWeight: 600 } }, TEXT.roomFound + ' ' + found.code),
+                            h('span', { style: S.label }, '房主 ' + (found.host || '-') + ' · ' + (found.members || 0) + ' 人在客厅'),
+                          ),
+                          h('button', {
+                            type: 'button',
+                            style: { ...S.btnPrimary, marginTop: 6 },
+                            disabled: busy,
+                            onClick: async () => {
+                              const ok = await call('/join', { code: found.code })
+                              if (ok) {
+                                setFound(null)
+                                setRoomCode('')
+                                setExpanded(true)
+                              }
+                            },
+                          }, TEXT.roomJoin),
+                        )
+                      : null,
+                    h('div', { style: { ...S.label, marginTop: 4 } }, TEXT.advanced),
                     h('div', { style: S.step }, TEXT.stepCreate),
                     h(
                       'div',
@@ -588,7 +674,7 @@ window.__ModuleLoader__.load({
                       ? h(
                           'div',
                           null,
-                          h('div', { style: { ...S.label, marginBottom: 6 } }, TEXT.localBoard),
+                          h('div', { style: { ...S.label, marginBottom: 6 } }, TEXT.myDesk),
                           h(
                             'div',
                             { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
@@ -674,6 +760,22 @@ window.__ModuleLoader__.load({
                 : h(
                     React.Fragment,
                     null,
+
+                    h('div', { style: S.row, gap: 8 },
+                      h('span', { style: S.step }, TEXT.livingRoom),
+                      h('button', {
+                        type: 'button',
+                        style: { ...S.badge, cursor: 'pointer', background: 'transparent' },
+                        disabled: busy,
+                        title: TEXT.shareTranscriptToggle,
+                        onClick: async () => {
+                          const next = !shareOut
+                          setShareOut(next)
+                          await call('/settings', { shareTranscript: next })
+                        },
+                      }, (shareOut ? '✔ ' : '✕ ') + TEXT.shareTranscriptToggle),
+                    ),
+                    h('div', { style: shareOut ? S.warn : S.label }, shareOut ? TEXT.shareTranscriptOn : TEXT.shareTranscriptOff),
                     h(
                       'div',
                       { style: { ...S.row, justifyContent: 'space-between' } },

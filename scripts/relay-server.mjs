@@ -219,6 +219,25 @@ function handleRelay(sub, req, res) {
     json(res, 200, { ok: true, rooms: roomsView() })
     return
   }
+  if (sub === '/relay/room' && req.method === 'GET') {
+    const url = new URL(req.url || '/', 'http://localhost')
+    const code = (url.searchParams.get('code') || url.searchParams.get('c') || '').toUpperCase()
+    const room = rooms.get(code)
+    if (!room) {
+      json(res, 404, { error: 'no such room' })
+      return
+    }
+    const online = [...room.members.values()].filter((m) => now() - m.updatedAt < MEMBER_STALE_MS)
+    json(res, 200, {
+      code: room.code,
+      host: room.host,
+      members: online.length,
+      totalMembers: room.members.size,
+      relay: relayUrlFor(req),
+      createdAt: room.createdAt,
+    })
+    return
+  }
   if (sub === '/relay/room' && req.method === 'POST') {
     return readJson(req).then((body) => {
       const room = createRoom(body.name)

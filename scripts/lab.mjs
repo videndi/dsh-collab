@@ -163,7 +163,21 @@ async function main() {
       return `${names.join(' / ')}，成员会话 ${guest.sessions[0].label} · ${guest.sessions[0].tool} · ${guest.sessions[0].tokensIn} tok`
     })
 
+    await step('问答分离：默认不把模型输出发给房间', async () => {
+      const hostSession = makeSession('sess-privacy-1', 'D:/work/alpha')
+      host.fireSessionEvent(hostSession, { type: 'assistant/message', data: { turn: 9, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '这段是私有的模型输出，不应该出现在房间里' }] }, stream: [], usage: { inputTokens: 10, outputTokens: 5 } } })
+      await wait(2400)
+      const state = await json(peer.origin, '/dsh-collab/api/state')
+      const owner = state.body.members.find((m) => m.name === '实验房主')
+      const session = (owner.sessions || []).find((x) => x.id === 'sess-privacy-1')
+      assert(session, '会话卡不在')
+      const leaked = (session.timeline || []).some((t) => String(t.text || '').includes('不应该出现在房间里'))
+      assert(!leaked, '私有输出被同步到房间了')
+      return '只有动作，没有输出正文'
+    })
+
     await step('进度可见：队友能看到对方的动作与发言（timeline）', async () => {
+      await post(host.origin, '/dsh-collab/api/settings', { shareTranscript: true })
       const hostSession = makeSession('sess-host-1', 'D:/work/alpha')
       host.fireSessionEvent(hostSession, { type: 'tool/call', data: { turn: 3, step: 1, callId: 'c9', name: 'grep', arguments: JSON.stringify({ pattern: 'createRoom', path: 'src/index.js' }) } })
       host.fireSessionEvent(hostSession, { type: 'assistant/message', data: { turn: 3, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '找到房间创建入口了，接下来改路由层。' }] }, stream: [], usage: { inputTokens: 300, outputTokens: 40 } } })
@@ -180,6 +194,7 @@ async function main() {
       assert(kinds.includes('say'), '没有发言条目')
       const said = (session.timeline || []).filter((t) => t.kind === 'say').map((t) => t.text).join('|')
       assert(said.includes('找到房间创建入口'), '发言内容没同步：' + said)
+      await post(host.origin, '/dsh-collab/api/settings', { shareTranscript: false })
       return `${session.timeline.length} 条进展`
     })
 

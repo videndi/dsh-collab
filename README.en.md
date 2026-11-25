@@ -27,6 +27,22 @@ another member's transcript.
 The tunnel only exposes the plugin's own small service (`/dsh-collab/relay/*` and the invite landing page), never
 the DSH Web UI. It dies with the Host process.
 
+## One living room, private desks
+
+| Area | Who sees it | Content |
+|---|---|---|
+| **Living room (room)** | every member of the room | members, what each is doing, delivered files, room messages |
+| **My desk** | only you | the full Q&A of your own session |
+
+Q&A is separated by default: model output fragments are **not** sent to the room — only *what was done* and *what was
+delivered*. A panel toggle (`share output fragments`) turns that sharing on when you want it, and off again.
+
+Joining is like adding a contact: configure the relay **once** (step 0 in the panel), then just type the 6-character
+**room code** → the plugin looks it up on the relay and shows the host and online count → **enter the room**.
+
+A relay address must be reachable by both sides; that is a physical requirement. It only has to exist once, and it
+does not have to be a public domain — a LAN IP or a Tailscale address works, with no network setup on the member side.
+
 ### Topology: who relays
 
 | Topology | Who must stay online | Invite link | Good for |
